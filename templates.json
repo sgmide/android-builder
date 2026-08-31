@@ -4,7 +4,7 @@
     "name": "Empty Activity",
     "description": "Simple Android activity",
     "icon": "ic_empty_activity",
-    "url": "https://raw.githubusercontent.com/SgmApp/AndroidTemplates/main/empty_activity.zip",
+    "url": "https://raw.githubusercontent.com/sgmide/android-builder/main/empty_activity.zip",
     "language": "Java",
     "languages": ["Java", "Kotlin"],
     "buildLanguages": ["Groovy", "Kotlin DSL"],

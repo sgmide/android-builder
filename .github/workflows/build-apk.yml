@@ -1,4 +1,4 @@
-name: Android AIDE - GitHub Actions Build APK
+name: Build Android APK
 
 on:
   workflow_dispatch:
@@ -9,23 +9,20 @@ permissions:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
 
-      # ==========================================
-      # CHECKOUT
-      # ==========================================
-
+      # --------------------------------------------------
+      # 1. Checkout
+      # --------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
 
-      # ==========================================
-      # JAVA 17
-      # ==========================================
-
+      # --------------------------------------------------
+      # 2. Java 17
+      # --------------------------------------------------
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -33,72 +30,46 @@ jobs:
           java-version: '17'
 
 
-      # ==========================================
-      # CHECK PROJECT ZIP
-      # ==========================================
-
+      # --------------------------------------------------
+      # 3. Check project ZIP
+      # --------------------------------------------------
       - name: Check Project ZIP
         shell: bash
         run: |
           set -e
 
-          echo "=========================================="
-          echo "CHECKING PROJECT ZIP"
-          echo "=========================================="
+          echo "Checking build-input..."
 
           if [ ! -f "build-input/project.zip" ]; then
-            echo ""
             echo "ERROR: build-input/project.zip not found."
-            echo ""
-            echo "Current directory:"
-            pwd
-            echo ""
-            echo "Repository files:"
-            find . -maxdepth 5 -type f | sort | head -300
             exit 1
           fi
 
-          echo ""
-          echo "Project ZIP found:"
           ls -lh build-input/project.zip
 
 
-      # ==========================================
-      # EXTRACT PROJECT
-      # ==========================================
-
+      # --------------------------------------------------
+      # 4. Extract project
+      # --------------------------------------------------
       - name: Extract Project
         shell: bash
         run: |
           set -e
 
           rm -rf android-project
+
           mkdir -p android-project
 
-          echo "Extracting project..."
+          unzip -q build-input/project.zip -d android-project
 
-          unzip -q \
-            build-input/project.zip \
-            -d android-project
-
-          echo ""
-          echo "Project extracted successfully."
-
-          echo ""
-          echo "Project files:"
-
-          find android-project \
-            -maxdepth 6 \
-            -type f \
-            | sort \
-            | head -300
+          echo "Extracted project:"
+          find android-project -maxdepth 3 -type f | sort | head -200
 
 
-      # ==========================================
-      # DETECT ANDROID PROJECT ROOT
-      # ==========================================
-
-      - name: Detect Android Project
+      # --------------------------------------------------
+      # 5. Detect Android project root
+      # --------------------------------------------------
+      - name: Detect Project Root
         id: project
         shell: bash
         run: |
@@ -106,59 +77,36 @@ jobs:
 
           ROOT=""
 
-          echo "Searching for Android project..."
-
-          if [ -f "android-project/settings.gradle" ]; then
-
-            ROOT="android-project"
-
-          elif [ -f "android-project/settings.gradle.kts" ]; then
+          if [ -f "android-project/settings.gradle" ] || \
+             [ -f "android-project/settings.gradle.kts" ]; then
 
             ROOT="android-project"
 
           else
 
-            FILE=$(find android-project \
-              -type f \
-              \( \
-                -name "settings.gradle" \
-                -o \
-                -name "settings.gradle.kts" \
-              \) \
-              | head -n 1)
+            FOUND=$(find android-project -maxdepth 3 \
+              \( -name settings.gradle -o -name settings.gradle.kts \) \
+              -print -quit)
 
-            if [ -n "$FILE" ]; then
-              ROOT="$(dirname "$FILE")"
+            if [ -n "$FOUND" ]; then
+              ROOT="$(dirname "$FOUND")"
             fi
 
           fi
 
           if [ -z "$ROOT" ]; then
-
-            echo ""
             echo "ERROR: Android project root not found."
-            echo ""
-
-            find android-project \
-              -maxdepth 8 \
-              -type f \
-              | sort
-
             exit 1
-
           fi
 
-          echo ""
-          echo "Android project root:"
-          echo "$ROOT"
+          echo "Project root: $ROOT"
 
           echo "project_root=$ROOT" >> "$GITHUB_OUTPUT"
 
 
-      # ==========================================
-      # INSPECT PROJECT
-      # ==========================================
-
+      # --------------------------------------------------
+      # 6. Inspect project
+      # --------------------------------------------------
       - name: Inspect Project
         shell: bash
         run: |
@@ -166,42 +114,22 @@ jobs:
 
           ROOT="${{ steps.project.outputs.project_root }}"
 
-          echo "=========================================="
-          echo "ANDROID PROJECT"
-          echo "=========================================="
+          echo "================================"
+          echo "PROJECT ROOT"
+          echo "================================"
 
-          echo ""
-          echo "Root:"
-          echo "$ROOT"
+          cd "$ROOT"
 
-          echo ""
-          echo "Contents:"
-          ls -la "$ROOT"
+          pwd
 
-          echo ""
-          echo "Gradle files:"
-
-          find "$ROOT" \
-            -maxdepth 4 \
-            -type f \
-            \( \
-              -name "build.gradle" \
-              -o \
-              -name "build.gradle.kts" \
-              -o \
-              -name "settings.gradle" \
-              -o \
-              -name "settings.gradle.kts" \
-              -o \
-              -name "gradle.properties" \
-            \) \
-            -print
+          echo
+          echo "Files:"
+          find . -maxdepth 3 -type f | sort | head -300
 
 
-      # ==========================================
-      # PREPARE GRADLE
-      # ==========================================
-
+      # --------------------------------------------------
+      # 7. Prepare Gradle
+      # --------------------------------------------------
       - name: Prepare Gradle
         shell: bash
         run: |
@@ -211,299 +139,148 @@ jobs:
 
           cd "$ROOT"
 
-          if [ ! -f "gradlew" ]; then
-            echo "ERROR: gradlew not found."
-            ls -la
-            exit 1
-          fi
-
           chmod +x gradlew
 
-          echo ""
-          echo "Gradle wrapper found."
-
-          echo ""
           echo "Gradle version:"
-
           ./gradlew --version
 
 
-      # ==========================================
-      # RESTORE / CREATE SIGNING KEY
-      # ==========================================
-
-      - name: Restore Signing Keystore
+      # --------------------------------------------------
+      # 8. Restore / Create signing key
+      # --------------------------------------------------
+      - name: Restore or Create Signing Key
         shell: bash
         env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          SECRET_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          SECRET_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          SECRET_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           GH_TOKEN: ${{ github.token }}
-
         run: |
           set -e
 
-          echo "=========================================="
-          echo "RESTORE / CREATE SIGNING KEY"
-          echo "=========================================="
-
           KEYSTORE_FILE="$RUNNER_TEMP/android-aide-signing.jks"
 
-          # ==========================================
-          # DEFAULT AUTOMATIC KEY SETTINGS
-          # ==========================================
-
           KEY_ALIAS="androidaide"
+
           KEYSTORE_PASSWORD="androidaide-store-password"
+
           KEY_PASSWORD="androidaide-password"
 
-          KEY_SOURCE="automatic"
+          ARTIFACT_NAME="AndroidAIDE-Signing-Key"
 
-          echo ""
-          echo "Default signing alias:"
-          echo "$KEY_ALIAS"
+          echo "================================"
+          echo "SIGNING KEY"
+          echo "================================"
 
 
-          # ==========================================
-          # 1. TRY GITHUB SECRET
-          # ==========================================
+          # ------------------------------------------------
+          # Find latest signing-key artifact
+          # ------------------------------------------------
 
-          if [ -n "$KEYSTORE_BASE64" ]; then
+          ARTIFACT_JSON=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100")
 
-            echo ""
-            echo "GitHub signing secret found."
-            echo "Restoring keystore from GitHub Secret..."
 
-            printf '%s' "$KEYSTORE_BASE64" \
-              | base64 --decode \
-              > "$KEYSTORE_FILE"
+          ARTIFACT_ID=$(echo "$ARTIFACT_JSON" | jq -r '
+            [
+              .artifacts[]
+              | select(.name == "AndroidAIDE-Signing-Key")
+              | select(.expired == false)
+            ]
+            | sort_by(.created_at)
+            | reverse
+            | .[0].id // empty
+          ')
 
-            if [ ! -s "$KEYSTORE_FILE" ]; then
 
-              echo ""
-              echo "WARNING: Secret keystore is empty."
-              rm -f "$KEYSTORE_FILE"
+          # ------------------------------------------------
+          # Restore existing key
+          # ------------------------------------------------
 
-            else
+          if [ -n "$ARTIFACT_ID" ]; then
 
-              if keytool \
-                -list \
-                -keystore "$KEYSTORE_FILE" \
-                -storepass "$SECRET_STORE_PASSWORD" \
-                -alias "$SECRET_KEY_ALIAS" \
-                > /dev/null 2>&1; then
+            echo "Existing signing key artifact found."
 
-                echo ""
-                echo "Secret keystore verified successfully."
+            DOWNLOAD_DIR="$RUNNER_TEMP/signing-download"
 
-                KEY_ALIAS="$SECRET_KEY_ALIAS"
-                KEYSTORE_PASSWORD="$SECRET_STORE_PASSWORD"
-                KEY_PASSWORD="$SECRET_KEY_PASSWORD"
+            rm -rf "$DOWNLOAD_DIR"
 
-                KEY_SOURCE="github-secret"
+            mkdir -p "$DOWNLOAD_DIR"
 
-              else
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
+              > "$RUNNER_TEMP/signing.zip"
 
-                echo ""
-                echo "WARNING: GitHub Secret keystore verification failed."
-                echo "Will try previous automatic signing key."
+            unzip -q \
+              "$RUNNER_TEMP/signing.zip" \
+              -d "$DOWNLOAD_DIR"
 
-                rm -f "$KEYSTORE_FILE"
+            FOUND_KEY=$(find "$DOWNLOAD_DIR" \
+              -type f \
+              \( -name "*.jks" -o -name "*.keystore" \) \
+              -print -quit)
 
-              fi
-
+            if [ -z "$FOUND_KEY" ]; then
+              echo "ERROR: Signing keystore not found in artifact."
+              exit 1
             fi
+
+            cp "$FOUND_KEY" "$KEYSTORE_FILE"
+
+            echo "Signing key restored."
 
           else
 
-            echo ""
-            echo "No GitHub signing secret configured."
+            # ------------------------------------------------
+            # Create new key
+            # ------------------------------------------------
 
-          fi
+            echo "No previous signing key found."
 
+            echo "Creating new signing key..."
 
-          # ==========================================
-          # 2. FIND PREVIOUS AUTOMATIC KEY
-          # ==========================================
-
-          if [ ! -s "$KEYSTORE_FILE" ]; then
-
-            echo ""
-            echo "Searching previous automatic signing-key artifact..."
-
-            ARTIFACT_JSON=$(gh api \
-              -H "Accept: application/vnd.github+json" \
-              "/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
-              2>/dev/null || echo '{"artifacts":[]}')
-
-            ARTIFACT_ID=$(echo "$ARTIFACT_JSON" | python3 <<'PY'
-          import sys
-          import json
-
-          data = json.load(sys.stdin)
-
-          artifacts = data.get("artifacts", [])
-
-          candidates = []
-
-          for artifact in artifacts:
-              if artifact.get("name") == "AndroidAIDE-Signing-Key":
-                  if not artifact.get("expired", False):
-                      candidates.append(artifact)
-
-          candidates.sort(
-              key=lambda x: x.get("created_at", ""),
-              reverse=True
-          )
-
-          if candidates:
-              print(candidates[0].get("id", ""))
-          PY
-          )
-
-            if [ -n "$ARTIFACT_ID" ]; then
-
-              echo ""
-              echo "Previous signing key artifact found."
-              echo "Artifact ID: $ARTIFACT_ID"
-
-              ARTIFACT_ZIP="$RUNNER_TEMP/signing-key.zip"
-              DOWNLOAD_DIR="$RUNNER_TEMP/signing-key"
-
-              rm -rf "$DOWNLOAD_DIR"
-              mkdir -p "$DOWNLOAD_DIR"
-
-              echo ""
-              echo "Downloading previous signing key..."
-
-              gh api \
-                -H "Accept: application/vnd.github+json" \
-                "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
-                > "$ARTIFACT_ZIP"
-
-              if [ -s "$ARTIFACT_ZIP" ]; then
-
-                unzip -q \
-                  "$ARTIFACT_ZIP" \
-                  -d "$DOWNLOAD_DIR" || true
-
-                FOUND_KEY=$(find "$DOWNLOAD_DIR" \
-                  -type f \
-                  -name "*.jks" \
-                  | head -n 1)
-
-                if [ -n "$FOUND_KEY" ]; then
-
-                  cp "$FOUND_KEY" "$KEYSTORE_FILE"
-
-                  KEY_SOURCE="automatic-artifact"
-
-                  echo ""
-                  echo "Previous automatic signing key restored."
-
-                else
-
-                  echo ""
-                  echo "No JKS file found inside artifact."
-
-                fi
-
-              else
-
-                echo ""
-                echo "Signing key artifact download failed."
-
-              fi
-
-            else
-
-              echo ""
-              echo "No previous signing-key artifact found."
-
-            fi
-
-          fi
-
-
-          # ==========================================
-          # 3. CREATE NEW KEY IF NOTHING EXISTS
-          # ==========================================
-
-          if [ ! -s "$KEYSTORE_FILE" ]; then
-
-            echo ""
-            echo "=========================================="
-            echo "CREATING NEW AUTOMATIC SIGNING KEY"
-            echo "=========================================="
-
-            keytool \
-              -genkeypair \
+            keytool -genkeypair \
               -v \
               -keystore "$KEYSTORE_FILE" \
-              -storetype JKS \
               -alias "$KEY_ALIAS" \
               -keyalg RSA \
               -keysize 2048 \
               -validity 10000 \
               -storepass "$KEYSTORE_PASSWORD" \
               -keypass "$KEY_PASSWORD" \
-              -dname "CN=AndroidAIDE,O=SGMSoft,C=IN"
+              -dname "CN=AndroidAIDE,O=SGMIDE,C=IN"
 
-            KEY_SOURCE="automatic-new"
-
-            echo ""
-            echo "New automatic signing key created."
+            echo "New signing key created."
 
           fi
 
 
-          # ==========================================
-          # VERIFY FINAL KEY
-          # ==========================================
+          # ------------------------------------------------
+          # Verify key
+          # ------------------------------------------------
 
-          echo ""
-          echo "=========================================="
-          echo "VERIFYING SIGNING KEY"
-          echo "=========================================="
-
-          keytool \
-            -list \
+          keytool -list \
             -keystore "$KEYSTORE_FILE" \
             -storepass "$KEYSTORE_PASSWORD" \
-            -alias "$KEY_ALIAS" \
-            > /dev/null
+            -alias "$KEY_ALIAS"
 
-          echo ""
-          echo "Signing key verification successful."
-
-          echo ""
-          echo "Key source:"
-          echo "$KEY_SOURCE"
+          echo "Signing key verified."
 
 
-          # ==========================================
-          # EXPORT ENVIRONMENT
-          # ==========================================
+          # ------------------------------------------------
+          # Export environment variables
+          # ------------------------------------------------
 
-          {
-            echo "KEYSTORE_FILE=$KEYSTORE_FILE"
-            echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
-            echo "KEY_ALIAS=$KEY_ALIAS"
-            echo "KEY_PASSWORD=$KEY_PASSWORD"
-            echo "KEY_SOURCE=$KEY_SOURCE"
-          } >> "$GITHUB_ENV"
+          echo "KEYSTORE_FILE=$KEYSTORE_FILE" >> "$GITHUB_ENV"
 
-          echo ""
-          echo "=========================================="
-          echo "SIGNING KEY READY"
-          echo "=========================================="
+          echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+
+          echo "KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+
+          echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
 
 
-      # ==========================================
-      # CONFIGURE DEBUG SIGNING
-      # ==========================================
-
+      # --------------------------------------------------
+      # 9. Configure Gradle signing
+      # --------------------------------------------------
       - name: Configure Debug Signing
         shell: bash
         run: |
@@ -513,17 +290,11 @@ jobs:
 
           cd "$ROOT"
 
-          echo "=========================================="
-          echo "CONFIGURING DEBUG SIGNING"
-          echo "=========================================="
-
           if [ ! -f "app/build.gradle" ]; then
             echo "ERROR: app/build.gradle not found."
             exit 1
           fi
 
-          cp app/build.gradle \
-            app/build.gradle.github-backup
 
           python3 <<'PY'
           from pathlib import Path
@@ -534,19 +305,27 @@ jobs:
 
           marker = "// ANDROID_AIDE_GITHUB_SIGNING"
 
-          if marker in text:
-              print("GitHub signing configuration already exists.")
-              raise SystemExit(0)
 
-          signing = r'''
+          if marker in text:
+
+              print("GitHub signing configuration already exists.")
+
+          else:
+
+              signing = r'''
 
           // ANDROID_AIDE_GITHUB_SIGNING
 
           android.signingConfigs.create("githubDebug") {
+
               storeFile file(System.getenv("KEYSTORE_FILE"))
+
               storePassword System.getenv("KEYSTORE_PASSWORD")
+
               keyAlias System.getenv("KEY_ALIAS")
+
               keyPassword System.getenv("KEY_PASSWORD")
+
           }
 
           android.buildTypes.debug.signingConfig =
@@ -554,21 +333,25 @@ jobs:
 
           '''
 
-          path.write_text(
-              text.rstrip() + "\n" + signing + "\n"
-          )
+              path.write_text(
+                  text.rstrip() + "\n" + signing + "\n"
+              )
 
-          print("GitHub signing configuration added.")
+              print("GitHub signing configuration added.")
+
           PY
 
-          echo ""
-          echo "Debug signing configured."
+
+          echo
+          echo "Final app/build.gradle:"
+          echo "--------------------------------"
+
+          cat app/build.gradle
 
 
-      # ==========================================
-      # BUILD DEBUG APK
-      # ==========================================
-
+      # --------------------------------------------------
+      # 10. Build APK
+      # --------------------------------------------------
       - name: Build APK
         shell: bash
         run: |
@@ -578,43 +361,19 @@ jobs:
 
           cd "$ROOT"
 
-          echo "=========================================="
-          echo "BUILDING DEBUG APK"
-          echo "=========================================="
-
-          echo ""
-          echo "Project:"
-          pwd
-
-          echo ""
-          echo "Gradle task:"
-          echo "assembleDebug"
-
-          echo ""
+          echo "================================"
+          echo "BUILDING APK"
+          echo "================================"
 
           ./gradlew assembleDebug \
             --no-daemon \
             --stacktrace \
             --warning-mode all
 
-          echo ""
-          echo "=========================================="
-          echo "DEBUG APK BUILD SUCCESS"
-          echo "=========================================="
 
-          echo ""
-          echo "APK files:"
-
-          find app/build/outputs/apk \
-            -type f \
-            -name "*.apk" \
-            -print
-
-
-      # ==========================================
-      # LOCATE APK
-      # ==========================================
-
+      # --------------------------------------------------
+      # 11. Find APK
+      # --------------------------------------------------
       - name: Locate APK
         id: apk
         shell: bash
@@ -623,55 +382,63 @@ jobs:
 
           ROOT="${{ steps.project.outputs.project_root }}"
 
+          echo "Searching APK..."
+
           APK=$(find "$ROOT/app/build/outputs/apk" \
             -type f \
             -name "*.apk" \
-            | head -n 1)
+            -print -quit)
 
           if [ -z "$APK" ]; then
-
-            echo ""
             echo "ERROR: APK not found."
-            echo ""
-
-            find "$ROOT/app/build/outputs" \
-              -type f \
-              -print || true
-
             exit 1
-
           fi
 
-          echo ""
           echo "APK found:"
-          echo "$APK"
+          ls -lh "$APK"
 
           echo "apk_path=$APK" >> "$GITHUB_OUTPUT"
 
 
-      # ==========================================
-      # UPLOAD APK
-      # ==========================================
-
-      - name: Upload Debug Build Output
+      # --------------------------------------------------
+      # 12. Upload APK
+      # --------------------------------------------------
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: AndroidAIDE-Debug-APK
-          path: |
-            ${{ steps.project.outputs.project_root }}/app/build/outputs/apk/debug/
+          path: ${{ steps.apk.outputs.apk_path }}
           if-no-files-found: error
-          retention-days: 7
 
 
-      # ==========================================
-      # SAVE AUTOMATIC SIGNING KEY
-      # ==========================================
-
+      # --------------------------------------------------
+      # 13. Save signing key
+      # --------------------------------------------------
       - name: Save Signing Key
-        if: env.KEY_SOURCE != 'github-secret'
         uses: actions/upload-artifact@v4
         with:
           name: AndroidAIDE-Signing-Key
           path: ${{ env.KEYSTORE_FILE }}
-          if-no-files-found: error
           retention-days: 90
+          if-no-files-found: error
+
+
+      # --------------------------------------------------
+      # 14. Build summary
+      # --------------------------------------------------
+      - name: Build Summary
+        shell: bash
+        run: |
+          echo "================================"
+          echo "ANDROID AIDE BUILD SUCCESS"
+          echo "================================"
+
+          echo "Application ID is NOT changed."
+
+          echo "versionCode is NOT changed."
+
+          echo "Signing alias: $KEY_ALIAS"
+
+          echo "APK artifact: AndroidAIDE-Debug-APK"
+
+          echo "Signing artifact: AndroidAIDE-Signing-Key"

@@ -21,8 +21,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+
       # ==========================================
-      # JAVA
+      # JAVA 17
       # ==========================================
 
       - name: Setup Java 17
@@ -30,6 +31,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
 
       # ==========================================
       # CHECK PROJECT ZIP
@@ -52,13 +54,14 @@ jobs:
             pwd
             echo ""
             echo "Repository files:"
-            find . -maxdepth 4 -type f | sort | head -300
+            find . -maxdepth 5 -type f | sort | head -300
             exit 1
           fi
 
           echo ""
           echo "Project ZIP found:"
           ls -lh build-input/project.zip
+
 
       # ==========================================
       # EXTRACT PROJECT
@@ -89,6 +92,7 @@ jobs:
             -type f \
             | sort \
             | head -300
+
 
       # ==========================================
       # DETECT ANDROID PROJECT ROOT
@@ -150,8 +154,9 @@ jobs:
 
           echo "project_root=$ROOT" >> "$GITHUB_OUTPUT"
 
+
       # ==========================================
-      # PROJECT INFORMATION
+      # INSPECT PROJECT
       # ==========================================
 
       - name: Inspect Project
@@ -192,8 +197,9 @@ jobs:
             \) \
             -print
 
+
       # ==========================================
-      # FIX GRADLE WRAPPER PERMISSION
+      # PREPARE GRADLE
       # ==========================================
 
       - name: Prepare Gradle
@@ -221,14 +227,20 @@ jobs:
 
           ./gradlew --version
 
+
       # ==========================================
-      # RESTORE / CREATE SAME KEYSTORE
+      # RESTORE / CREATE SIGNING KEY
       # ==========================================
 
       - name: Restore Signing Keystore
         shell: bash
         env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          SECRET_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          SECRET_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          SECRET_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           GH_TOKEN: ${{ github.token }}
+
         run: |
           set -e
 
@@ -238,49 +250,64 @@ jobs:
 
           KEYSTORE_FILE="$RUNNER_TEMP/android-aide-signing.jks"
 
+          # ==========================================
+          # DEFAULT AUTOMATIC KEY SETTINGS
+          # ==========================================
+
           KEY_ALIAS="androidaide"
           KEYSTORE_PASSWORD="androidaide-store-password"
           KEY_PASSWORD="androidaide-password"
 
+          KEY_SOURCE="automatic"
+
           echo ""
-          echo "Signing alias:"
+          echo "Default signing alias:"
           echo "$KEY_ALIAS"
 
+
           # ==========================================
-          # TRY GITHUB SECRET FIRST
+          # 1. TRY GITHUB SECRET
           # ==========================================
 
-          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+          if [ -n "$KEYSTORE_BASE64" ]; then
 
             echo ""
             echo "GitHub signing secret found."
-            echo "Restoring keystore from secret..."
+            echo "Restoring keystore from GitHub Secret..."
 
-            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" \
+            printf '%s' "$KEYSTORE_BASE64" \
               | base64 --decode \
               > "$KEYSTORE_FILE"
 
-            if [ -s "$KEYSTORE_FILE" ]; then
+            if [ ! -s "$KEYSTORE_FILE" ]; then
+
+              echo ""
+              echo "WARNING: Secret keystore is empty."
+              rm -f "$KEYSTORE_FILE"
+
+            else
 
               if keytool \
                 -list \
                 -keystore "$KEYSTORE_FILE" \
-                -storepass "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
-                -alias "${{ secrets.ANDROID_KEY_ALIAS }}" \
+                -storepass "$SECRET_STORE_PASSWORD" \
+                -alias "$SECRET_KEY_ALIAS" \
                 > /dev/null 2>&1; then
 
                 echo ""
                 echo "Secret keystore verified successfully."
 
-                KEY_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
-                KEYSTORE_PASSWORD="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
-                KEY_PASSWORD="${{ secrets.ANDROID_KEY_PASSWORD }}"
+                KEY_ALIAS="$SECRET_KEY_ALIAS"
+                KEYSTORE_PASSWORD="$SECRET_STORE_PASSWORD"
+                KEY_PASSWORD="$SECRET_KEY_PASSWORD"
+
+                KEY_SOURCE="github-secret"
 
               else
 
                 echo ""
-                echo "WARNING: Secret keystore verification failed."
-                echo "Falling back to automatic builder key."
+                echo "WARNING: GitHub Secret keystore verification failed."
+                echo "Will try previous automatic signing key."
 
                 rm -f "$KEYSTORE_FILE"
 
@@ -291,26 +318,26 @@ jobs:
           else
 
             echo ""
-            echo "No signing secret configured."
-            echo "Using automatic builder signing key."
+            echo "No GitHub signing secret configured."
 
           fi
 
+
           # ==========================================
-          # FIND PREVIOUS SIGNING KEY ARTIFACT
+          # 2. FIND PREVIOUS AUTOMATIC KEY
           # ==========================================
 
           if [ ! -s "$KEYSTORE_FILE" ]; then
 
             echo ""
-            echo "Searching previous signing-key artifact..."
+            echo "Searching previous automatic signing-key artifact..."
 
             ARTIFACT_JSON=$(gh api \
               -H "Accept: application/vnd.github+json" \
               "/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
               2>/dev/null || echo '{"artifacts":[]}')
 
-            ARTIFACT_ID=$(echo "$ARTIFACT_JSON" | python3 -c '
+            ARTIFACT_ID=$(echo "$ARTIFACT_JSON" | python3 <<'PY'
           import sys
           import json
 
@@ -318,12 +345,22 @@ jobs:
 
           artifacts = data.get("artifacts", [])
 
+          candidates = []
+
           for artifact in artifacts:
               if artifact.get("name") == "AndroidAIDE-Signing-Key":
                   if not artifact.get("expired", False):
-                      print(artifact.get("id"))
-                      break
-          ')
+                      candidates.append(artifact)
+
+          candidates.sort(
+              key=lambda x: x.get("created_at", ""),
+              reverse=True
+          )
+
+          if candidates:
+              print(candidates[0].get("id", ""))
+          PY
+          )
 
             if [ -n "$ARTIFACT_ID" ]; then
 
@@ -360,10 +397,22 @@ jobs:
 
                   cp "$FOUND_KEY" "$KEYSTORE_FILE"
 
+                  KEY_SOURCE="automatic-artifact"
+
                   echo ""
-                  echo "Previous signing key restored."
+                  echo "Previous automatic signing key restored."
+
+                else
+
+                  echo ""
+                  echo "No JKS file found inside artifact."
 
                 fi
+
+              else
+
+                echo ""
+                echo "Signing key artifact download failed."
 
               fi
 
@@ -376,14 +425,17 @@ jobs:
 
           fi
 
+
           # ==========================================
-          # CREATE NEW KEY IF NEEDED
+          # 3. CREATE NEW KEY IF NOTHING EXISTS
           # ==========================================
 
           if [ ! -s "$KEYSTORE_FILE" ]; then
 
             echo ""
-            echo "Creating new automatic signing key..."
+            echo "=========================================="
+            echo "CREATING NEW AUTOMATIC SIGNING KEY"
+            echo "=========================================="
 
             keytool \
               -genkeypair \
@@ -398,17 +450,22 @@ jobs:
               -keypass "$KEY_PASSWORD" \
               -dname "CN=AndroidAIDE,O=SGMSoft,C=IN"
 
+            KEY_SOURCE="automatic-new"
+
             echo ""
-            echo "New signing key created."
+            echo "New automatic signing key created."
 
           fi
 
+
           # ==========================================
-          # VERIFY KEY
+          # VERIFY FINAL KEY
           # ==========================================
 
           echo ""
-          echo "Verifying signing key..."
+          echo "=========================================="
+          echo "VERIFYING SIGNING KEY"
+          echo "=========================================="
 
           keytool \
             -list \
@@ -420,6 +477,11 @@ jobs:
           echo ""
           echo "Signing key verification successful."
 
+          echo ""
+          echo "Key source:"
+          echo "$KEY_SOURCE"
+
+
           # ==========================================
           # EXPORT ENVIRONMENT
           # ==========================================
@@ -429,12 +491,14 @@ jobs:
             echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
             echo "KEY_ALIAS=$KEY_ALIAS"
             echo "KEY_PASSWORD=$KEY_PASSWORD"
+            echo "KEY_SOURCE=$KEY_SOURCE"
           } >> "$GITHUB_ENV"
 
           echo ""
           echo "=========================================="
           echo "SIGNING KEY READY"
           echo "=========================================="
+
 
       # ==========================================
       # CONFIGURE DEBUG SIGNING
@@ -458,12 +522,14 @@ jobs:
             exit 1
           fi
 
-          cp app/build.gradle app/build.gradle.github-backup
+          cp app/build.gradle \
+            app/build.gradle.github-backup
 
           python3 <<'PY'
           from pathlib import Path
 
           path = Path("app/build.gradle")
+
           text = path.read_text()
 
           marker = "// ANDROID_AIDE_GITHUB_SIGNING"
@@ -485,11 +551,12 @@ jobs:
 
           android.buildTypes.debug.signingConfig =
               android.signingConfigs.getByName("githubDebug")
+
           '''
 
-          text = text.rstrip() + "\n" + signing + "\n"
-
-          path.write_text(text)
+          path.write_text(
+              text.rstrip() + "\n" + signing + "\n"
+          )
 
           print("GitHub signing configuration added.")
           PY
@@ -497,8 +564,9 @@ jobs:
           echo ""
           echo "Debug signing configured."
 
+
       # ==========================================
-      # BUILD DEBUG APK ONLY
+      # BUILD DEBUG APK
       # ==========================================
 
       - name: Build APK
@@ -542,8 +610,9 @@ jobs:
             -name "*.apk" \
             -print
 
+
       # ==========================================
-      # SHOW APK
+      # LOCATE APK
       # ==========================================
 
       - name: Locate APK
@@ -560,6 +629,7 @@ jobs:
             | head -n 1)
 
           if [ -z "$APK" ]; then
+
             echo ""
             echo "ERROR: APK not found."
             echo ""
@@ -569,6 +639,7 @@ jobs:
               -print || true
 
             exit 1
+
           fi
 
           echo ""
@@ -577,8 +648,9 @@ jobs:
 
           echo "apk_path=$APK" >> "$GITHUB_OUTPUT"
 
-            # ==========================================
-      # UPLOAD DEBUG BUILD OUTPUT
+
+      # ==========================================
+      # UPLOAD APK
       # ==========================================
 
       - name: Upload Debug Build Output
@@ -590,15 +662,16 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+
       # ==========================================
-      # SAVE SIGNING KEY
+      # SAVE AUTOMATIC SIGNING KEY
       # ==========================================
 
       - name: Save Signing Key
+        if: env.KEY_SOURCE != 'github-secret'
         uses: actions/upload-artifact@v4
         with:
           name: AndroidAIDE-Signing-Key
           path: ${{ env.KEYSTORE_FILE }}
           if-no-files-found: error
           retention-days: 90
-          

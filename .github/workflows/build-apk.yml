@@ -5,35 +5,21 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
 
-      # ==========================================
-      # CHECKOUT
-      # ==========================================
-
       - name: Checkout
         uses: actions/checkout@v4
-
-      # ==========================================
-      # JAVA
-      # ==========================================
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
-      # ==========================================
-      # CHECK PROJECT ZIP
-      # ==========================================
 
       - name: Check Project ZIP
         run: |
@@ -44,24 +30,11 @@ jobs:
           echo "=========================================="
 
           if [ ! -f "build-input/project.zip" ]; then
-            echo ""
             echo "ERROR: build-input/project.zip not found."
-            echo ""
-            echo "Current directory:"
-            pwd
-            echo ""
-            echo "Repository files:"
-            find . -maxdepth 4 -type f | sort | head -300
             exit 1
           fi
 
-          echo ""
-          echo "Project ZIP found:"
           ls -lh build-input/project.zip
-
-      # ==========================================
-      # EXTRACT PROJECT
-      # ==========================================
 
       - name: Extract Project
         run: |
@@ -70,27 +43,9 @@ jobs:
           rm -rf android-project
           mkdir -p android-project
 
-          echo "Extracting project..."
+          unzip -q build-input/project.zip -d android-project
 
-          unzip -q \
-            build-input/project.zip \
-            -d android-project
-
-          echo ""
-          echo "Project extracted successfully."
-
-          echo ""
-          echo "Project files:"
-
-          find android-project \
-            -maxdepth 6 \
-            -type f \
-            | sort \
-            | head -300
-
-      # ==========================================
-      # DETECT ANDROID PROJECT ROOT
-      # ==========================================
+          echo "Project extracted."
 
       - name: Detect Android Project
         id: project
@@ -100,18 +55,13 @@ jobs:
 
           ROOT=""
 
-          echo "Searching for Android project..."
-
           if [ -f "android-project/settings.gradle" ]; then
-
             ROOT="android-project"
 
           elif [ -f "android-project/settings.gradle.kts" ]; then
-
             ROOT="android-project"
 
           else
-
             FILE=$(find android-project \
               -type f \
               \( \
@@ -124,75 +74,16 @@ jobs:
             if [ -n "$FILE" ]; then
               ROOT="$(dirname "$FILE")"
             fi
-
           fi
 
           if [ -z "$ROOT" ]; then
-
-            echo ""
             echo "ERROR: Android project root not found."
-            echo ""
-
-            find android-project \
-              -maxdepth 8 \
-              -type f \
-              | sort
-
             exit 1
-
           fi
 
-          echo ""
-          echo "Android project root:"
-          echo "$ROOT"
+          echo "Android project root: $ROOT"
 
           echo "project_root=$ROOT" >> "$GITHUB_OUTPUT"
-
-      # ==========================================
-      # PROJECT INFORMATION
-      # ==========================================
-
-      - name: Inspect Project
-        shell: bash
-        run: |
-          set -e
-
-          ROOT="${{ steps.project.outputs.project_root }}"
-
-          echo "=========================================="
-          echo "ANDROID PROJECT"
-          echo "=========================================="
-
-          echo ""
-          echo "Root:"
-          echo "$ROOT"
-
-          echo ""
-          echo "Contents:"
-          ls -la "$ROOT"
-
-          echo ""
-          echo "Gradle files:"
-
-          find "$ROOT" \
-            -maxdepth 4 \
-            -type f \
-            \( \
-              -name "build.gradle" \
-              -o \
-              -name "build.gradle.kts" \
-              -o \
-              -name "settings.gradle" \
-              -o \
-              -name "settings.gradle.kts" \
-              -o \
-              -name "gradle.properties" \
-            \) \
-            -print
-
-      # ==========================================
-      # FIX GRADLE WRAPPER PERMISSION
-      # ==========================================
 
       - name: Prepare Gradle
         shell: bash
@@ -203,202 +94,9 @@ jobs:
 
           cd "$ROOT"
 
-          if [ ! -f "gradlew" ]; then
-            echo "ERROR: gradlew not found."
-            ls -la
-            exit 1
-          fi
-
           chmod +x gradlew
 
-          echo ""
-          echo "Gradle wrapper found."
-
-          echo ""
-          echo "Gradle version:"
-
           ./gradlew --version
-
-      # ==========================================
-      # RESTORE SAME SIGNING KEY
-      # ==========================================
-
-      - name: Restore Signing Keystore
-        shell: bash
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "RESTORING SIGNING KEY"
-          echo "=========================================="
-
-          KEYSTORE_FILE="$RUNNER_TEMP/android-aide-signing.jks"
-
-          # ==========================================
-          # CHECK SECRETS
-          # ==========================================
-
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo ""
-            echo "ERROR: ANDROID_KEYSTORE_BASE64 secret is missing."
-            echo ""
-            echo "Go to:"
-            echo "Repository -> Settings -> Secrets and variables -> Actions"
-            echo ""
-            exit 1
-          fi
-
-          if [ -z "$KEYSTORE_PASSWORD" ]; then
-            echo ""
-            echo "ERROR: ANDROID_KEYSTORE_PASSWORD secret is missing."
-            exit 1
-          fi
-
-          if [ -z "$KEY_ALIAS" ]; then
-            echo ""
-            echo "ERROR: ANDROID_KEY_ALIAS secret is missing."
-            exit 1
-          fi
-
-          if [ -z "$KEY_PASSWORD" ]; then
-            echo ""
-            echo "ERROR: ANDROID_KEY_PASSWORD secret is missing."
-            exit 1
-          fi
-
-          # ==========================================
-          # DECODE KEYSTORE
-          # ==========================================
-
-          echo ""
-          echo "Decoding keystore..."
-
-          printf '%s' "$KEYSTORE_BASE64" \
-            | base64 --decode > "$KEYSTORE_FILE"
-
-          if [ ! -s "$KEYSTORE_FILE" ]; then
-            echo ""
-            echo "ERROR: Keystore file is empty."
-            exit 1
-          fi
-
-          echo "Keystore file restored."
-
-          # ==========================================
-          # VERIFY KEYSTORE
-          # ==========================================
-
-          echo ""
-          echo "Verifying keystore..."
-
-          if ! keytool \
-            -list \
-            -keystore "$KEYSTORE_FILE" \
-            -storepass "$KEYSTORE_PASSWORD" \
-            -alias "$KEY_ALIAS" \
-            > /dev/null 2>&1
-          then
-
-            echo ""
-            echo "ERROR: Keystore verification failed."
-            echo ""
-            echo "Please check:"
-            echo "ANDROID_KEYSTORE_BASE64"
-            echo "ANDROID_KEYSTORE_PASSWORD"
-            echo "ANDROID_KEY_ALIAS"
-            echo "ANDROID_KEY_PASSWORD"
-
-            exit 1
-          fi
-
-          echo ""
-          echo "Signing keystore verified successfully."
-
-          # ==========================================
-          # EXPORT ENVIRONMENT VARIABLES
-          # ==========================================
-
-          {
-            echo "KEYSTORE_FILE=$KEYSTORE_FILE"
-            echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
-            echo "KEY_ALIAS=$KEY_ALIAS"
-            echo "KEY_PASSWORD=$KEY_PASSWORD"
-          } >> "$GITHUB_ENV"
-
-          echo ""
-          echo "=========================================="
-          echo "SIGNING KEY READY"
-          echo "=========================================="
-
-      # ==========================================
-      # CONFIGURE DEBUG SIGNING
-      # ==========================================
-
-      - name: Configure Debug Signing
-        shell: bash
-        run: |
-          set -e
-
-          ROOT="${{ steps.project.outputs.project_root }}"
-
-          cd "$ROOT"
-
-          echo "=========================================="
-          echo "CONFIGURING DEBUG SIGNING"
-          echo "=========================================="
-
-          if [ ! -f "app/build.gradle" ]; then
-            echo "ERROR: app/build.gradle not found."
-            exit 1
-          fi
-
-          python3 <<'PY'
-          from pathlib import Path
-
-          path = Path("app/build.gradle")
-
-          text = path.read_text()
-
-          marker = "// ANDROID_AIDE_GITHUB_SIGNING"
-
-          if marker in text:
-              print("GitHub signing configuration already exists.")
-              raise SystemExit(0)
-
-          signing = r'''
-
-// ANDROID_AIDE_GITHUB_SIGNING
-
-android.signingConfigs.create("githubDebug") {
-    storeFile file(System.getenv("KEYSTORE_FILE"))
-    storePassword System.getenv("KEYSTORE_PASSWORD")
-    keyAlias System.getenv("KEY_ALIAS")
-    keyPassword System.getenv("KEY_PASSWORD")
-}
-
-android.buildTypes.debug.signingConfig =
-    android.signingConfigs.getByName("githubDebug")
-'''
-
-          text = text.rstrip() + "\n" + signing + "\n"
-
-          path.write_text(text)
-
-          print("GitHub signing configuration added.")
-          PY
-
-          echo ""
-          echo "Debug signing configured."
-
-      # ==========================================
-      # BUILD DEBUG APK ONLY
-      # ==========================================
 
       - name: Build APK
         shell: bash
@@ -409,80 +107,11 @@ android.buildTypes.debug.signingConfig =
 
           cd "$ROOT"
 
-          echo "=========================================="
-          echo "BUILDING DEBUG APK"
-          echo "=========================================="
-
-          echo ""
-          echo "Project:"
-          pwd
-
-          echo ""
-          echo "Gradle task:"
-          echo "assembleDebug"
-
-          echo ""
-
           ./gradlew assembleDebug \
             --no-daemon \
-            --stacktrace \
-            --warning-mode all
+            --stacktrace
 
-          echo ""
-          echo "=========================================="
-          echo "DEBUG APK BUILD SUCCESS"
-          echo "=========================================="
-
-          echo ""
-          echo "APK files:"
-
-          find app/build/outputs/apk \
-            -type f \
-            -name "*.apk" \
-            -print
-
-      # ==========================================
-      # SHOW APK
-      # ==========================================
-
-      - name: Locate APK
-        id: apk
-        shell: bash
-        run: |
-          set -e
-
-          ROOT="${{ steps.project.outputs.project_root }}"
-
-          APK=$(find "$ROOT/app/build/outputs/apk" \
-            -type f \
-            -name "*.apk" \
-            | head -n 1)
-
-          if [ -z "$APK" ]; then
-
-            echo ""
-            echo "ERROR: APK not found."
-            echo ""
-
-            find "$ROOT/app/build/outputs" \
-              -type f \
-              -print || true
-
-            exit 1
-
-          fi
-
-          echo ""
-          echo "APK found:"
-          echo "$APK"
-
-          echo "apk_path=$APK" >> "$GITHUB_OUTPUT"
-
-      # ==========================================
-      # UPLOAD DEBUG BUILD OUTPUT
-      # ==========================================
-
-      - name: Upload Debug Build Output
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: AndroidAIDE-Debug-APK

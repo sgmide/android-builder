@@ -47,17 +47,17 @@ jobs:
 
     steps:
 
-      # ======================================================
+      # ==========================================================
       # CHECKOUT
-      # ======================================================
+      # ==========================================================
 
       - name: Checkout Builder Repository
         uses: actions/checkout@v4
 
 
-      # ======================================================
+      # ==========================================================
       # JAVA 17
-      # ======================================================
+      # ==========================================================
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -66,9 +66,9 @@ jobs:
           java-version: "17"
 
 
-      # ======================================================
-      # MASK SIGNING VALUES
-      # ======================================================
+      # ==========================================================
+      # PROTECT SIGNING VALUES
+      # ==========================================================
 
       - name: Protect Signing Values
         shell: bash
@@ -77,6 +77,8 @@ jobs:
           SIGN_KEY_ALIAS: ${{ inputs.key_alias }}
           SIGN_KEY_PASSWORD: ${{ inputs.key_password }}
         run: |
+
+          set -e
 
           echo "::add-mask::$SIGN_STORE_PASSWORD"
           echo "::add-mask::$SIGN_KEY_ALIAS"
@@ -87,16 +89,19 @@ jobs:
           echo "SIGN_KEY_PASSWORD=$SIGN_KEY_PASSWORD"
 
 
-      # ======================================================
+      # ==========================================================
       # CHECK PROJECT ZIP
-      # ======================================================
+      # ==========================================================
 
       - name: Check Project ZIP
         shell: bash
         run: |
+
           set -e
 
-          echo "Checking project ZIP..."
+          echo "=========================================="
+          echo "Checking project ZIP"
+          echo "=========================================="
 
           if [ ! -f "build-input/project.zip" ]; then
 
@@ -116,19 +121,23 @@ jobs:
 
           ls -lh build-input/project.zip
 
+          echo ""
           echo "Project ZIP found."
 
 
-      # ======================================================
+      # ==========================================================
       # CHECK SIGNING KEY
-      # ======================================================
+      # ==========================================================
 
       - name: Check Signing Keystore
         shell: bash
         run: |
+
           set -e
 
-          echo "Checking signing keystore..."
+          echo "=========================================="
+          echo "Checking signing keystore"
+          echo "=========================================="
 
           if [ ! -f "build-input/signing-key.jks" ]; then
 
@@ -148,19 +157,23 @@ jobs:
 
           ls -lh build-input/signing-key.jks
 
+          echo ""
           echo "Signing keystore found."
 
 
-      # ======================================================
+      # ==========================================================
       # EXTRACT PROJECT
-      # ======================================================
+      # ==========================================================
 
       - name: Extract Android Project
         shell: bash
         run: |
+
           set -e
 
-          echo "Extracting Android project..."
+          echo "=========================================="
+          echo "Extracting Android project"
+          echo "=========================================="
 
           rm -rf android-project
 
@@ -180,14 +193,15 @@ jobs:
             | head -500
 
 
-      # ======================================================
+      # ==========================================================
       # DETECT PROJECT ROOT
-      # ======================================================
+      # ==========================================================
 
       - name: Detect Android Project Root
         id: project
         shell: bash
         run: |
+
           set -e
 
           ROOT=""
@@ -212,7 +226,9 @@ jobs:
               | head -n 1)
 
             if [ -n "$FILE" ]; then
+
               ROOT="$(dirname "$FILE")"
+
             fi
 
           fi
@@ -223,6 +239,7 @@ jobs:
             echo "ERROR: Android project root not found."
 
             echo ""
+
             echo "Project files:"
 
             find android-project \
@@ -231,32 +248,38 @@ jobs:
               | sort
 
             exit 1
+
           fi
 
 
           echo "Android project root:"
           echo "$ROOT"
 
-          echo "project_root=$ROOT" \
-            >> "$GITHUB_OUTPUT"
+          echo "project_root=$ROOT" >> "$GITHUB_OUTPUT"
 
 
-      # ======================================================
-      # SHOW PROJECT STRUCTURE
-      # ======================================================
+      # ==========================================================
+      # INSPECT PROJECT
+      # ==========================================================
 
       - name: Inspect Android Project
         shell: bash
         run: |
+
           set -e
 
           ROOT="${{ steps.project.outputs.project_root }}"
+
+          echo "=========================================="
+          echo "Android project"
+          echo "=========================================="
 
           echo "Project root:"
           echo "$ROOT"
 
           echo ""
-          echo "Project structure:"
+
+          echo "Gradle files:"
 
           find "$ROOT" \
             -maxdepth 5 \
@@ -276,25 +299,32 @@ jobs:
             | sort
 
 
-      # ======================================================
+      # ==========================================================
       # CHECK MODULE
-      # ======================================================
+      # ==========================================================
 
       - name: Check Android Module
         shell: bash
         run: |
+
           set -e
 
           ROOT="${{ steps.project.outputs.project_root }}"
           MODULE="${{ inputs.module }}"
+
+          echo "=========================================="
+          echo "Checking Android module"
+          echo "=========================================="
 
           echo "Selected module:"
           echo "$MODULE"
 
           MODULE_DIR="$ROOT/$MODULE"
 
+
           if [ ! -d "$MODULE_DIR" ]; then
 
+            echo ""
             echo "ERROR: Module directory not found:"
             echo "$MODULE_DIR"
 
@@ -307,97 +337,127 @@ jobs:
               | sort
 
             exit 1
+
           fi
 
+
+          echo ""
           echo "Module directory found:"
           echo "$MODULE_DIR"
 
 
-      # ======================================================
+      # ==========================================================
       # PREPARE GRADLE
-      # ======================================================
+      # ==========================================================
 
       - name: Prepare Gradle
         shell: bash
         run: |
+
           set -e
 
           ROOT="${{ steps.project.outputs.project_root }}"
 
           cd "$ROOT"
 
+
           if [ ! -f "gradlew" ]; then
 
             echo "ERROR: gradlew not found."
 
+            echo ""
+
             ls -la
 
             exit 1
+
           fi
+
 
           chmod +x gradlew
 
-          echo ""
-          echo "Gradle version:"
+
+          echo "=========================================="
+          echo "Gradle version"
+          echo "=========================================="
 
           ./gradlew --version
 
 
-      # ======================================================
+      # ==========================================================
       # PREPARE SIGNING KEY
-      # ======================================================
+      # ==========================================================
 
       - name: Prepare Signing Key
         shell: bash
         run: |
+
           set -e
 
+          echo "=========================================="
+          echo "Preparing signing key"
+          echo "=========================================="
+
+
           SIGN_DIR="$RUNNER_TEMP/android-signing"
+
 
           rm -rf "$SIGN_DIR"
 
           mkdir -p "$SIGN_DIR"
 
+
           cp \
             build-input/signing-key.jks \
             "$SIGN_DIR/signing-key.jks"
 
+
           chmod 600 \
             "$SIGN_DIR/signing-key.jks"
 
-          echo "SIGNING_KEY=$SIGN_DIR/signing-key.jks" \
-            >> "$GITHUB_ENV"
 
+          echo "SIGNING_KEY=$SIGN_DIR/signing-key.jks" >> "$GITHUB_ENV"
+
+
+          echo ""
           echo "Signing key prepared."
 
 
-      # ======================================================
+      # ==========================================================
       # VERIFY SIGNING KEY
-      # ======================================================
+      # ==========================================================
 
       - name: Verify Signing Keystore
         shell: bash
         run: |
+
           set -e
 
-          echo "Verifying signing keystore..."
+          echo "=========================================="
+          echo "Verifying signing keystore"
+          echo "=========================================="
 
-          keytool -list \
+
+          keytool \
+            -list \
             -keystore "$SIGNING_KEY" \
             -storepass "$SIGN_STORE_PASSWORD" \
             -alias "$SIGN_KEY_ALIAS" \
             > /dev/null
 
+
+          echo ""
           echo "Signing keystore verified successfully."
 
 
-      # ======================================================
+      # ==========================================================
       # CONFIGURE SIGNING
-      # ======================================================
+      # ==========================================================
 
       - name: Configure APK Signing
         shell: bash
         run: |
+
           set -e
 
           ROOT="${{ steps.project.outputs.project_root }}"
@@ -406,15 +466,21 @@ jobs:
           cd "$ROOT"
 
 
-          # --------------------------------------------------
-          # APK signing currently requires Groovy build.gradle
-          # --------------------------------------------------
-
           BUILD_FILE="$MODULE/build.gradle"
+
+
+          echo "=========================================="
+          echo "Configuring APK signing"
+          echo "=========================================="
+
+          echo ""
+          echo "Build file:"
+          echo "$BUILD_FILE"
 
 
           if [ ! -f "$BUILD_FILE" ]; then
 
+            echo ""
             echo "ERROR: $BUILD_FILE not found."
 
             echo ""
@@ -426,30 +492,23 @@ jobs:
               | sort
 
             exit 1
+
           fi
 
-
-          # --------------------------------------------------
-          # Backup original build.gradle
-          # --------------------------------------------------
 
           cp \
             "$BUILD_FILE" \
             "$BUILD_FILE.github-backup"
 
 
-          # --------------------------------------------------
-          # Add signing configuration only once
-          # --------------------------------------------------
-
           if grep -q "ANDROID_AIDE_GITHUB_SIGNED" "$BUILD_FILE"; then
 
+            echo ""
             echo "GitHub signed configuration already exists."
 
           else
 
             cat >> "$BUILD_FILE" <<'EOF'
-
 
 // ==========================================================
 // ANDROID AIDE GITHUB SIGNED BUILD
@@ -480,29 +539,32 @@ android.buildTypes.debug.signingConfig =
         "githubSigned"
     )
 
-
 // ANDROID_AIDE_GITHUB_SIGNED
 EOF
 
+            echo ""
             echo "GitHub signing configuration added."
 
           fi
 
 
           echo ""
-          echo "Signing configuration:"
-          echo ""
+          echo "=========================================="
+          echo "Final build.gradle"
+          echo "=========================================="
 
-          tail -50 "$BUILD_FILE"
+
+          tail -80 "$BUILD_FILE"
 
 
-      # ======================================================
+      # ==========================================================
       # BUILD SIGNED APK
-      # ======================================================
+      # ==========================================================
 
       - name: Build Signed APK
         shell: bash
         run: |
+
           set -e
 
           ROOT="${{ steps.project.outputs.project_root }}"
@@ -510,15 +572,18 @@ EOF
 
           cd "$ROOT"
 
+
           echo "=========================================="
           echo "Building signed APK"
           echo "=========================================="
 
+          echo ""
           echo "Module : $MODULE"
           echo "Build  : Debug"
           echo "Type   : APK"
 
           echo ""
+
 
           ./gradlew \
             ":${MODULE}:assembleDebug" \
@@ -527,29 +592,40 @@ EOF
             --warning-mode all
 
 
-      # ======================================================
+      # ==========================================================
       # LOCATE APK
-      # ======================================================
+      # ==========================================================
 
       - name: Locate Signed APK
         id: apk
         shell: bash
         run: |
+
           set -e
 
           ROOT="${{ steps.project.outputs.project_root }}"
           MODULE="${{ inputs.module }}"
 
+
           APK_DIR="$ROOT/$MODULE/build/outputs/apk"
 
-          echo "Searching APK directory:"
+
+          echo "=========================================="
+          echo "Searching signed APK"
+          echo "=========================================="
+
+          echo ""
+          echo "APK directory:"
           echo "$APK_DIR"
+
 
           if [ ! -d "$APK_DIR" ]; then
 
+            echo ""
             echo "ERROR: APK output directory not found."
 
             echo ""
+
             echo "Available build outputs:"
 
             find "$ROOT/$MODULE/build/outputs" \
@@ -560,6 +636,7 @@ EOF
               || true
 
             exit 1
+
           fi
 
 
@@ -571,9 +648,11 @@ EOF
 
           if [ -z "$APK" ]; then
 
+            echo ""
             echo "ERROR: Signed APK not found."
 
             echo ""
+
             echo "APK output files:"
 
             find "$APK_DIR" \
@@ -582,6 +661,7 @@ EOF
               || true
 
             exit 1
+
           fi
 
 
@@ -594,56 +674,72 @@ EOF
           ls -lh "$APK"
 
 
-          echo "apk_path=$APK" \
-            >> "$GITHUB_OUTPUT"
+          echo "apk_path=$APK" >> "$GITHUB_OUTPUT"
 
 
-      # ======================================================
+      # ==========================================================
       # VERIFY APK SIGNATURE
-      # ======================================================
+      # ==========================================================
 
       - name: Verify APK Signature
         shell: bash
         run: |
+
           set -e
 
           APK="${{ steps.apk.outputs.apk_path }}"
+
 
           echo "=========================================="
           echo "Verifying APK signature"
           echo "=========================================="
 
-          apksigner verify \
+
+          apksigner \
+            verify \
             --verbose \
             "$APK"
+
 
           echo ""
           echo "APK signature verification successful."
 
 
-      # ======================================================
-      # SHOW APK INFORMATION
-      # ======================================================
+      # ==========================================================
+      # APK INFORMATION
+      # ==========================================================
 
       - name: Show APK Information
         shell: bash
         run: |
+
           set -e
 
           APK="${{ steps.apk.outputs.apk_path }}"
 
+
+          echo "=========================================="
+          echo "APK Information"
+          echo "=========================================="
+
+
+          echo ""
           echo "APK:"
           echo "$APK"
+
 
           echo ""
 
           ls -lh "$APK"
 
+
           echo ""
 
-          echo "APK information:"
+          echo "Signature information:"
 
-          apksigner verify \
+
+          apksigner \
+            verify \
             --verbose \
             "$APK" \
             2>&1 \
@@ -652,32 +748,43 @@ EOF
             || true
 
 
-      # ======================================================
+      # ==========================================================
       # PREPARE ARTIFACT
-      # ======================================================
+      # ==========================================================
 
       - name: Prepare Signed APK Artifact
         shell: bash
         run: |
+
           set -e
+
+          echo "=========================================="
+          echo "Preparing artifact"
+          echo "=========================================="
+
 
           rm -rf signed-output
 
+
           mkdir -p signed-output
+
 
           cp \
             "${{ steps.apk.outputs.apk_path }}" \
             signed-output/app-signed.apk
 
+
+          echo ""
           echo "Signed artifact prepared:"
+
 
           ls -lh \
             signed-output/app-signed.apk
 
 
-      # ======================================================
-      # UPLOAD SIGNED APK
-      # ======================================================
+      # ==========================================================
+      # UPLOAD APK
+      # ==========================================================
 
       - name: Upload Signed APK
         uses: actions/upload-artifact@v4
@@ -688,20 +795,28 @@ EOF
           retention-days: 7
 
 
-      # ======================================================
-      # CLEAN SIGNING FILE
-      # ======================================================
+      # ==========================================================
+      # CLEANUP
+      # ==========================================================
 
       - name: Cleanup Signing Key
         if: always()
         shell: bash
         run: |
-          echo "Cleaning temporary signing key..."
+
+          echo "=========================================="
+          echo "Cleaning signing key"
+          echo "=========================================="
+
 
           if [ -n "$RUNNER_TEMP" ]; then
+
             rm -f \
               "$RUNNER_TEMP/android-signing/signing-key.jks" \
               || true
+
           fi
 
+
+          echo ""
           echo "Signing key cleanup completed."

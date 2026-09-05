@@ -54,7 +54,6 @@ jobs:
 
       # --------------------------------------------------
       # Setup Java 17
-      # Android SDK command line tools require JDK 17+
       # --------------------------------------------------
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -73,7 +72,7 @@ jobs:
 
 
       # --------------------------------------------------
-      # Android SDK
+      # Setup Android SDK
       # --------------------------------------------------
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -85,7 +84,7 @@ jobs:
 
 
       # --------------------------------------------------
-      # Install SDK required by old Android project
+      # Install Android SDK 35
       # --------------------------------------------------
       - name: Install Android SDK 35
         run: |
@@ -106,11 +105,11 @@ jobs:
 
           echo ""
           echo "Installed SDK platforms:"
-          sdkmanager --list_installed | grep "platforms;android-27" || true
+          sdkmanager --list_installed | grep "platforms;android-35" || true
 
           echo ""
           echo "Installed build tools:"
-          sdkmanager --list_installed | grep "build-tools;27.1.1" || true
+          sdkmanager --list_installed | grep "build-tools;35.0.0" || true
 
 
       # --------------------------------------------------
@@ -236,7 +235,7 @@ jobs:
 
 
       # --------------------------------------------------
-      # Copy keystore
+      # Prepare signing
       # --------------------------------------------------
       - name: Prepare signing
         run: |
@@ -248,6 +247,9 @@ jobs:
             "$PROJECT_DIR/.androidaide/signing/release-key.jks"
 
           echo "Keystore copied"
+
+          ls -lh \
+            "$PROJECT_DIR/.androidaide/signing/release-key.jks"
 
 
       # --------------------------------------------------
@@ -273,7 +275,6 @@ jobs:
 
       # --------------------------------------------------
       # Check signing configuration
-      # Do NOT print passwords
       # --------------------------------------------------
       - name: Check signing configuration
         run: |
@@ -303,7 +304,7 @@ jobs:
 
 
       # --------------------------------------------------
-      # Show Gradle version
+      # Check Gradle version
       # --------------------------------------------------
       - name: Check Gradle version
         working-directory: ${{ env.PROJECT_DIR }}
@@ -324,6 +325,10 @@ jobs:
             --stacktrace
 
 
+      # ==================================================
+      # APK
+      # ==================================================
+
       # --------------------------------------------------
       # Build Signed APK
       # --------------------------------------------------
@@ -336,23 +341,6 @@ jobs:
 
           ./gradlew \
             :${{ inputs.module }}:assembleRelease \
-            -PsigningPropertiesFile=signing.properties \
-            --stacktrace \
-            --info
-
-
-      # --------------------------------------------------
-      # Build Signed AAB
-      # --------------------------------------------------
-      - name: Build Signed AAB
-        if: ${{ inputs.build_type == 'AAB' }}
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-
-          echo "Building signed AAB..."
-
-          ./gradlew \
-            :${{ inputs.module }}:bundleRelease \
             -PsigningPropertiesFile=signing.properties \
             --stacktrace \
             --info
@@ -403,6 +391,74 @@ jobs:
 
 
       # --------------------------------------------------
+      # Copy APK
+      #
+      # Source:
+      # build/outputs/apk/release/*.apk
+      #
+      # Destination:
+      # output/app-release.apk
+      # --------------------------------------------------
+      - name: Copy APK
+        if: ${{ inputs.build_type == 'APK' }}
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+
+          rm -rf output
+          mkdir -p output
+
+          APK_FILE=$(find \
+            "${{ inputs.module }}/build/outputs/apk/release" \
+            -type f \
+            -name "*.apk" \
+            -print -quit)
+
+          if [ -z "$APK_FILE" ]; then
+            echo "ERROR: APK file not found"
+            exit 1
+          fi
+
+          cp "$APK_FILE" output/app-release.apk
+
+          echo "APK copied:"
+          ls -lh output/app-release.apk
+
+
+      # --------------------------------------------------
+      # Upload Signed APK
+      # --------------------------------------------------
+      - name: Upload Signed APK
+        if: ${{ inputs.build_type == 'APK' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: AndroidAIDE-Signed-APK
+          path: |
+            ${{ env.PROJECT_DIR }}/output/app-release.apk
+          if-no-files-found: error
+
+
+      # ==================================================
+      # AAB
+      # ==================================================
+
+      # --------------------------------------------------
+      # Build Signed AAB
+      # --------------------------------------------------
+      - name: Build Signed AAB
+        if: ${{ inputs.build_type == 'AAB' }}
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+
+          echo "Building signed AAB..."
+
+          ./gradlew \
+            :${{ inputs.module }}:bundleRelease \
+            -PsigningPropertiesFile=signing.properties \
+            --stacktrace \
+            --info
+
+
+      # --------------------------------------------------
       # Find AAB
       # --------------------------------------------------
       - name: Find AAB
@@ -447,16 +503,37 @@ jobs:
 
 
       # --------------------------------------------------
-      # Upload Signed APK
+      # Copy AAB
+      #
+      # Source:
+      # build/outputs/bundle/release/*.aab
+      #
+      # Destination:
+      # output/app-release.aab
       # --------------------------------------------------
-      - name: Upload Signed APK
-        if: ${{ inputs.build_type == 'APK' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: AndroidAIDE-Signed-APK
-          path: |
-            ${{ env.PROJECT_DIR }}/${{ inputs.module }}/build/outputs/apk/release/*.apk
-          if-no-files-found: error
+      - name: Copy AAB
+        if: ${{ inputs.build_type == 'AAB' }}
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+
+          rm -rf output
+          mkdir -p output
+
+          AAB_FILE=$(find \
+            "${{ inputs.module }}/build/outputs/bundle/release" \
+            -type f \
+            -name "*.aab" \
+            -print -quit)
+
+          if [ -z "$AAB_FILE" ]; then
+            echo "ERROR: AAB file not found"
+            exit 1
+          fi
+
+          cp "$AAB_FILE" output/app-release.aab
+
+          echo "AAB copied:"
+          ls -lh output/app-release.aab
 
 
       # --------------------------------------------------
@@ -468,5 +545,32 @@ jobs:
         with:
           name: AndroidAIDE-Signed-AAB
           path: |
-            ${{ env.PROJECT_DIR }}/${{ inputs.module }}/build/outputs/bundle/release/*.aab
+            ${{ env.PROJECT_DIR }}/output/app-release.aab
           if-no-files-found: error
+
+
+      # --------------------------------------------------
+      # Final output
+      # --------------------------------------------------
+      - name: Show final output
+        run: |
+
+          echo "========================================"
+          echo "BUILD COMPLETED"
+          echo "========================================"
+
+          if [ "${{ inputs.build_type }}" = "APK" ]; then
+
+            echo ""
+            echo "APK:"
+            ls -lh \
+              "$PROJECT_DIR/output/app-release.apk"
+
+          else
+
+            echo ""
+            echo "AAB:"
+            ls -lh \
+              "$PROJECT_DIR/output/app-release.aab"
+
+          fi

@@ -3,6 +3,7 @@ name: Build Signed APK / AAB
 on:
   workflow_dispatch:
     inputs:
+
       build_type:
         description: "Select build type"
         required: true
@@ -12,17 +13,42 @@ on:
           - APK
           - AAB
 
+      module:
+        description: "Gradle module"
+        required: true
+        default: "app"
+        type: string
+
+      store_password:
+        description: "Keystore password"
+        required: true
+        type: string
+
+      key_alias:
+        description: "Key alias"
+        required: true
+        type: string
+
+      key_password:
+        description: "Key password"
+        required: true
+        type: string
+
+
 jobs:
+
   build:
+
     name: Build ${{ inputs.build_type }}
+
     runs-on: ubuntu-latest
 
     steps:
 
       # --------------------------------------------------
-      # Checkout project
+      # Checkout repository
       # --------------------------------------------------
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
 
@@ -45,51 +71,153 @@ jobs:
 
 
       # --------------------------------------------------
-      # Install required SDK
-      # compileSdkVersion 27
+      # Install SDK required by project
       # --------------------------------------------------
       - name: Install Android SDK 27
         run: |
           yes | sdkmanager --licenses || true
-          sdkmanager "platforms;android-27" "build-tools;27.1.1"
+          sdkmanager \
+            "platforms;android-27" \
+            "build-tools;27.1.1"
 
 
       # --------------------------------------------------
-      # Create signing directory
+      # Check uploaded project
+      # --------------------------------------------------
+      - name: Check build input
+        run: |
+          echo "Checking uploaded project..."
+
+          if [ ! -f "build-input/project.zip" ]; then
+            echo "ERROR: build-input/project.zip not found"
+            exit 1
+          fi
+
+          if [ ! -f "build-input/signing-key.jks" ]; then
+            echo "ERROR: build-input/signing-key.jks not found"
+            exit 1
+          fi
+
+          echo "Project ZIP found"
+          echo "Keystore found"
+
+
+      # --------------------------------------------------
+      # Extract uploaded project
+      # --------------------------------------------------
+      - name: Extract project
+        run: |
+          mkdir -p android-project
+
+          unzip -q \
+            build-input/project.zip \
+            -d android-project
+
+          echo "Project extracted"
+
+          ls -la android-project
+
+
+      # --------------------------------------------------
+      # Find actual Gradle project directory
+      # --------------------------------------------------
+      - name: Detect project directory
+        run: |
+          if [ -f "android-project/settings.gradle" ] || \
+             [ -f "android-project/settings.gradle.kts" ]; then
+
+            echo "PROJECT_DIR=android-project" >> $GITHUB_ENV
+
+          else
+
+            FOUND=$(find android-project \
+              -maxdepth 3 \
+              \( -name settings.gradle -o -name settings.gradle.kts \) \
+              -print -quit)
+
+            if [ -z "$FOUND" ]; then
+              echo "ERROR: settings.gradle not found"
+              exit 1
+            fi
+
+            DIR=$(dirname "$FOUND")
+
+            echo "PROJECT_DIR=$DIR" >> $GITHUB_ENV
+
+          fi
+
+
+      # --------------------------------------------------
+      # Show detected project
+      # --------------------------------------------------
+      - name: Show project
+        run: |
+          echo "Project directory:"
+          echo "$PROJECT_DIR"
+
+          ls -la "$PROJECT_DIR"
+
+
+      # --------------------------------------------------
+      # Copy keystore
       # --------------------------------------------------
       - name: Prepare signing
         run: |
-          mkdir -p .androidaide/signing
+          mkdir -p "$PROJECT_DIR/.androidaide/signing"
+
+          cp \
+            build-input/signing-key.jks \
+            "$PROJECT_DIR/.androidaide/signing/release-key.jks"
 
 
       # --------------------------------------------------
-      # Decode JKS from GitHub Secret
-      # --------------------------------------------------
-      - name: Create keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROIDAIDE_KEYSTORE_BASE64 }}
-        run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > .androidaide/signing/release-key.jks
-
-
-      # --------------------------------------------------
-      # Create signing properties
+      # Create signing.properties
       # --------------------------------------------------
       - name: Create signing properties
+        env:
+          STORE_PASSWORD: ${{ inputs.store_password }}
+          KEY_ALIAS: ${{ inputs.key_alias }}
+          KEY_PASSWORD: ${{ inputs.key_password }}
+
         run: |
-          cat > signing.properties <<EOF
+
+          cat > "$PROJECT_DIR/signing.properties" <<EOF
           storeFile=.androidaide/signing/release-key.jks
-          storePassword=${{ secrets.ANDROIDAIDE_STORE_PASSWORD }}
-          keyAlias=${{ secrets.ANDROIDAIDE_KEY_ALIAS }}
-          keyPassword=${{ secrets.ANDROIDAIDE_KEY_PASSWORD }}
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
           EOF
+
+
+      # --------------------------------------------------
+      # Check signing properties
+      # --------------------------------------------------
+      - name: Check signing configuration
+        run: |
+          echo "Signing configuration created"
+
+          test -f "$PROJECT_DIR/signing.properties"
+
+          test -f \
+            "$PROJECT_DIR/.androidaide/signing/release-key.jks"
 
 
       # --------------------------------------------------
       # Make Gradle executable
       # --------------------------------------------------
-      - name: Make gradlew executable
-        run: chmod +x gradlew
+      - name: Make Gradle executable
+        run: |
+          chmod +x "$PROJECT_DIR/gradlew"
+
+
+      # --------------------------------------------------
+      # Clean
+      # --------------------------------------------------
+      - name: Gradle clean
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          ./gradlew clean \
+            -PsigningPropertiesFile=signing.properties
 
 
       # --------------------------------------------------
@@ -97,8 +225,10 @@ jobs:
       # --------------------------------------------------
       - name: Build Signed APK
         if: ${{ inputs.build_type == 'APK' }}
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          ./gradlew assembleRelease \
+          ./gradlew \
+            :${{ inputs.module }}:assembleRelease \
             -PsigningPropertiesFile=signing.properties
 
 
@@ -107,32 +237,64 @@ jobs:
       # --------------------------------------------------
       - name: Build Signed AAB
         if: ${{ inputs.build_type == 'AAB' }}
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          ./gradlew bundleRelease \
+          ./gradlew \
+            :${{ inputs.module }}:bundleRelease \
             -PsigningPropertiesFile=signing.properties
+
+
+      # --------------------------------------------------
+      # Show APK
+      # --------------------------------------------------
+      - name: Find APK
+        if: ${{ inputs.build_type == 'APK' }}
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          echo "Generated APK files:"
+
+          find "${{ inputs.module }}/build/outputs/apk/release" \
+            -type f \
+            -name "*.apk" \
+            -print
+
+
+      # --------------------------------------------------
+      # Show AAB
+      # --------------------------------------------------
+      - name: Find AAB
+        if: ${{ inputs.build_type == 'AAB' }}
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          echo "Generated AAB files:"
+
+          find "${{ inputs.module }}/build/outputs/bundle/release" \
+            -type f \
+            -name "*.aab" \
+            -print
 
 
       # --------------------------------------------------
       # Upload APK
       # --------------------------------------------------
-      - name: Upload APK
+      - name: Upload Signed APK
         if: ${{ inputs.build_type == 'APK' }}
         uses: actions/upload-artifact@v4
         with:
-          name: androidaide-signed-apk
+          name: AndroidAIDE-Signed-APK
           path: |
-            app/build/outputs/apk/release/*.apk
+            ${{ env.PROJECT_DIR }}/${{ inputs.module }}/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
 
       # --------------------------------------------------
       # Upload AAB
       # --------------------------------------------------
-      - name: Upload AAB
+      - name: Upload Signed AAB
         if: ${{ inputs.build_type == 'AAB' }}
         uses: actions/upload-artifact@v4
         with:
-          name: androidaide-signed-aab
+          name: AndroidAIDE-Signed-AAB
           path: |
-            app/build/outputs/bundle/release/*.aab
+            ${{ env.PROJECT_DIR }}/${{ inputs.module }}/build/outputs/bundle/release/*.aab
           if-no-files-found: error

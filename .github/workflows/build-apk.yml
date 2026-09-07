@@ -75,9 +75,7 @@ jobs:
           unzip -q build-input/project.zip -d android-project
 
           echo "Project extracted successfully."
-          echo ""
 
-          echo "Project files:"
           find android-project \
             -type f \
             | sort \
@@ -85,7 +83,7 @@ jobs:
 
 
       # ==========================================
-      # FIND ANDROID PROJECT ROOT
+      # DETECT ANDROID PROJECT
       # ==========================================
       - name: Detect Android Project
         id: project
@@ -122,7 +120,6 @@ jobs:
 
           if [ -z "$ROOT" ]; then
             echo "ERROR: Android project root not found."
-            echo ""
             find android-project -type f | sort
             exit 1
           fi
@@ -134,7 +131,7 @@ jobs:
 
 
       # ==========================================
-      # FIND APP MODULE
+      # DETECT APP MODULE
       # ==========================================
       - name: Detect App Module
         id: app
@@ -164,12 +161,12 @@ jobs:
                 -o \
                 -name "build.gradle.kts" \
               \) \
-              | while read FILE; do
-                  if grep -q "com.android.application" "$FILE" 2>/dev/null; then
-                    dirname "$FILE"
-                    break
-                  fi
-                done)
+              | while read -r FILE; do
+                if grep -q "com.android.application" "$FILE" 2>/dev/null; then
+                  dirname "$FILE"
+                  break
+                fi
+              done)
 
             if [ -n "$MODULE" ]; then
               APP_DIR="$MODULE"
@@ -179,8 +176,6 @@ jobs:
           if [ -z "$APP_DIR" ]; then
             echo "ERROR: Android application module not found."
 
-            echo ""
-            echo "Gradle files:"
             find "$ROOT" \
               -type f \
               \( \
@@ -223,11 +218,8 @@ jobs:
           echo "$APP"
 
           echo ""
-          echo "Root contents:"
-          ls -la "$ROOT"
-
-          echo ""
           echo "Gradle files:"
+
           find "$ROOT" \
             -type f \
             \( \
@@ -272,7 +264,7 @@ jobs:
 
 
       # ==========================================
-      # PREPARE GRADLE WRAPPER
+      # PREPARE GRADLE
       # ==========================================
       - name: Prepare Gradle
         shell: bash
@@ -302,12 +294,10 @@ jobs:
             exit 1
           fi
 
-          # Fix Windows CRLF if present
           sed -i 's/\r$//' gradlew
 
           chmod +x gradlew
 
-          echo "Gradle wrapper:"
           ./gradlew --version
 
 
@@ -358,7 +348,7 @@ jobs:
             exit 0
           fi
 
-          echo "Previous signing artifact found:"
+          echo "Previous signing artifact:"
           echo "$ARTIFACT_ID"
 
           mkdir -p "$RUNNER_TEMP/signing-key"
@@ -388,21 +378,18 @@ jobs:
 
           cp "$FOUND_KEY" "$KEYSTORE_FILE"
 
-          echo "Signing key restored successfully."
-
           echo "KEYSTORE_FILE=$KEYSTORE_FILE" >> "$GITHUB_ENV"
-
           echo "KEY_ALIAS=androidaide" >> "$GITHUB_ENV"
-
           echo "KEYSTORE_PASSWORD=androidaide-store-password" >> "$GITHUB_ENV"
-
           echo "KEY_PASSWORD=androidaide-password" >> "$GITHUB_ENV"
 
           echo "create_new=false" >> "$GITHUB_OUTPUT"
 
+          echo "Signing key restored successfully."
+
 
       # ==========================================
-      # CREATE SIGNING KEY IF NEEDED
+      # CREATE SIGNING KEY
       # ==========================================
       - name: Create Signing Key
         if: steps.restore_key.outputs.create_new == 'true'
@@ -415,11 +402,8 @@ jobs:
           echo "=========================================="
 
           KEYSTORE_FILE="$RUNNER_TEMP/android-aide-signing.jks"
-
           KEY_ALIAS="androidaide"
-
           KEYSTORE_PASSWORD="androidaide-store-password"
-
           KEY_PASSWORD="androidaide-password"
 
           keytool \
@@ -443,10 +427,9 @@ jobs:
             > /dev/null
 
           echo "KEYSTORE_FILE=$KEYSTORE_FILE" >> "$GITHUB_ENV"
-
           echo "KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
-
           echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$KEY_PASSWORD"
 
           echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
 
@@ -508,7 +491,7 @@ jobs:
 
           path = Path(sys.argv[1])
 
-          text = path.read_text()
+          text = path.read_text(encoding="utf-8")
 
           marker = "// ANDROID_AIDE_GITHUB_SIGNING"
 
@@ -522,7 +505,7 @@ jobs:
 
               signingConfigs {
 
-                  create("githubDebug") {
+                  githubDebug {
 
                       storeFile file(System.getenv("KEYSTORE_FILE"))
 
@@ -540,7 +523,7 @@ jobs:
 
                   debug {
 
-                      signingConfig signingConfigs.getByName("githubDebug")
+                      signingConfig signingConfigs.githubDebug
 
                   }
 
@@ -551,8 +534,11 @@ jobs:
           """
 
               path.write_text(
-                  text.rstrip() + "\\n" + block + "\\n"
+                  text.rstrip() + "\n" + block.strip() + "\n",
+                  encoding="utf-8"
               )
+
+              print("GitHub signing configuration added.")
 
           else:
               print("Signing configuration already exists.")
@@ -574,7 +560,7 @@ jobs:
 
           path = Path(sys.argv[1])
 
-          text = path.read_text()
+          text = path.read_text(encoding="utf-8")
 
           marker = "// ANDROID_AIDE_GITHUB_SIGNING"
 
@@ -617,8 +603,11 @@ jobs:
           """
 
               path.write_text(
-                  text.rstrip() + "\\n" + block + "\\n"
+                  text.rstrip() + "\n" + block.strip() + "\n",
+                  encoding="utf-8"
               )
+
+              print("GitHub signing configuration added.")
 
           else:
               print("Signing configuration already exists.")
@@ -626,14 +615,100 @@ jobs:
           PY
 
           else
-
             echo "ERROR: build.gradle or build.gradle.kts not found."
-
             exit 1
-
           fi
 
           echo "Debug signing configured successfully."
+
+
+      # ==========================================
+      # NORMALIZE GRADLE FILES
+      # ==========================================
+      - name: Normalize Gradle Files
+        shell: bash
+        run: |
+          set -e
+
+          ROOT="${{ steps.project.outputs.project_root }}"
+
+          echo "=========================================="
+          echo "NORMALIZING GRADLE FILES"
+          echo "=========================================="
+
+          while IFS= read -r FILE; do
+
+            python3 - "$FILE" <<'PY'
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+
+          text = path.read_text(encoding="utf-8")
+
+          original = text
+
+          # Convert literal escaped newline sequences
+          # into real newlines.
+          text = text.replace("\\r\\n", "\n")
+          text = text.replace("\\n", "\n")
+          text = text.replace("\\r", "\n")
+
+          # Remove UTF-8 BOM if present.
+          text = text.lstrip("\ufeff")
+
+          if text != original:
+              path.write_text(
+                  text,
+                  encoding="utf-8"
+              )
+              print("Normalized:", path)
+          else:
+              print("OK:", path)
+
+          PY
+
+          done < <(
+            find "$ROOT" \
+              -type f \
+              \( \
+                -name "build.gradle" \
+                -o \
+                -name "build.gradle.kts" \
+                -o \
+                -name "settings.gradle" \
+                -o \
+                -name "settings.gradle.kts" \
+              \) \
+              -print
+          )
+
+          echo ""
+          echo "Gradle files normalized."
+
+
+      # ==========================================
+      # SHOW FINAL GRADLE FILE
+      # ==========================================
+      - name: Show Final Gradle Configuration
+        shell: bash
+        run: |
+          set -e
+
+          APP="${{ steps.app.outputs.app_dir }}"
+
+          echo "=========================================="
+          echo "FINAL APP BUILD FILE"
+          echo "=========================================="
+
+          if [ -f "$APP/build.gradle" ]; then
+            cat "$APP/build.gradle"
+          elif [ -f "$APP/build.gradle.kts" ]; then
+            cat "$APP/build.gradle.kts"
+          else
+            echo "ERROR: App Gradle file not found."
+            exit 1
+          fi
 
 
       # ==========================================
@@ -745,7 +820,6 @@ jobs:
             | head -n 1)
 
           if [ -z "$APK" ]; then
-
             echo "ERROR: APK not found."
 
             echo ""

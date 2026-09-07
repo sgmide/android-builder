@@ -162,10 +162,12 @@ jobs:
                 -name "build.gradle.kts" \
               \) \
               | while read -r FILE; do
+
                 if grep -q "com.android.application" "$FILE" 2>/dev/null; then
                   dirname "$FILE"
                   break
                 fi
+
               done)
 
             if [ -n "$MODULE" ]; then
@@ -429,8 +431,6 @@ jobs:
           echo "KEYSTORE_FILE=$KEYSTORE_FILE" >> "$GITHUB_ENV"
           echo "KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
           echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
-          echo "KEY_PASSWORD=$KEY_PASSWORD"
-
           echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
 
           echo "New signing key created successfully."
@@ -497,7 +497,7 @@ jobs:
 
           if marker not in text:
 
-              block = """
+              block = r'''
 
           // ANDROID_AIDE_GITHUB_SIGNING
 
@@ -531,7 +531,7 @@ jobs:
 
           }
 
-          """
+          '''
 
               path.write_text(
                   text.rstrip() + "\n" + block.strip() + "\n",
@@ -566,7 +566,7 @@ jobs:
 
           if marker not in text:
 
-              block = """
+              block = r'''
 
           // ANDROID_AIDE_GITHUB_SIGNING
 
@@ -600,7 +600,7 @@ jobs:
 
           }
 
-          """
+          '''
 
               path.write_text(
                   text.rstrip() + "\n" + block.strip() + "\n",
@@ -648,13 +648,10 @@ jobs:
 
           original = text
 
-          # Convert literal escaped newline sequences
-          # into real newlines.
           text = text.replace("\\r\\n", "\n")
           text = text.replace("\\n", "\n")
           text = text.replace("\\r", "\n")
 
-          # Remove UTF-8 BOM if present.
           text = text.lstrip("\ufeff")
 
           if text != original:
@@ -688,13 +685,14 @@ jobs:
 
 
       # ==========================================
-      # SHOW FINAL GRADLE FILE
+      # SHOW FINAL GRADLE CONFIGURATION
       # ==========================================
       - name: Show Final Gradle Configuration
         shell: bash
         run: |
           set -e
 
+          ROOT="${{ steps.project.outputs.project_root }}"
           APP="${{ steps.app.outputs.app_dir }}"
 
           echo "=========================================="
@@ -703,11 +701,28 @@ jobs:
 
           if [ -f "$APP/build.gradle" ]; then
             cat "$APP/build.gradle"
+
           elif [ -f "$APP/build.gradle.kts" ]; then
             cat "$APP/build.gradle.kts"
+
           else
             echo "ERROR: App Gradle file not found."
             exit 1
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "ROOT BUILD FILE"
+          echo "=========================================="
+
+          if [ -f "$ROOT/build.gradle" ]; then
+            cat "$ROOT/build.gradle"
+
+          elif [ -f "$ROOT/build.gradle.kts" ]; then
+            cat "$ROOT/build.gradle.kts"
+
+          else
+            echo "No root build.gradle file."
           fi
 
 
@@ -754,12 +769,14 @@ jobs:
           echo ""
           echo "Resources:"
 
-          find "$APP/src/main/res" \
-            -maxdepth 3 \
-            -type f \
-            -print \
-            | sort \
-            | head -500
+          if [ -d "$APP/src/main/res" ]; then
+            find "$APP/src/main/res" \
+              -maxdepth 3 \
+              -type f \
+              -print \
+              | sort \
+              | head -500
+          fi
 
 
       # ==========================================
@@ -768,11 +785,13 @@ jobs:
       - name: Build APK
         shell: bash
         run: |
-          set -e
+          set +e
 
           ROOT="${{ steps.project.outputs.project_root }}"
 
           cd "$ROOT"
+
+          LOG_FILE="$GITHUB_WORKSPACE/gradle-build.log"
 
           echo "=========================================="
           echo "BUILDING DEBUG APK"
@@ -782,21 +801,65 @@ jobs:
             assembleDebug \
             --no-daemon \
             --stacktrace \
-            --warning-mode all
+            --warning-mode all \
+            2>&1 | tee "$LOG_FILE"
+
+          BUILD_EXIT=${PIPESTATUS[0]}
 
           echo ""
           echo "=========================================="
-          echo "BUILD SUCCESS"
+          echo "GRADLE EXIT CODE: $BUILD_EXIT"
           echo "=========================================="
 
           echo ""
-          echo "APK files:"
+          echo "=========================================="
+          echo "FAILURE / EXCEPTION SUMMARY"
+          echo "=========================================="
+
+          grep -n -E \
+            "FAILURE:|What went wrong:|Execution failed|Caused by:|Could not|A problem occurred" \
+            "$LOG_FILE" \
+            | tail -100 \
+            || true
+
+          echo ""
+          echo "=========================================="
+          echo "APK SEARCH"
+          echo "=========================================="
 
           find . \
             -type f \
             -path "*/build/outputs/apk/*.apk" \
             -print \
             | sort
+
+          if [ "$BUILD_EXIT" -ne 0 ]; then
+
+            echo ""
+            echo "=========================================="
+            echo "GRADLE BUILD FAILED"
+            echo "=========================================="
+
+            exit "$BUILD_EXIT"
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "BUILD SUCCESS"
+          echo "=========================================="
+
+
+      # ==========================================
+      # UPLOAD GRADLE LOG
+      # ==========================================
+      - name: Upload Gradle Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AndroidAIDE-Gradle-Log-${{ github.run_id }}
+          path: gradle-build.log
+          if-no-files-found: ignore
+          retention-days: 7
 
 
       # ==========================================
@@ -867,6 +930,7 @@ jobs:
       # BUILD SUMMARY
       # ==========================================
       - name: Build Summary
+        if: success()
         shell: bash
         run: |
           echo "=========================================="

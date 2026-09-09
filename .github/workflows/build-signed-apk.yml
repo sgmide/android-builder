@@ -124,6 +124,7 @@ jobs:
       # ==================================================
 
       - name: Check build input
+        shell: bash
         run: |
           echo "========================================"
           echo "CHECK BUILD INPUT"
@@ -134,8 +135,18 @@ jobs:
             exit 1
           fi
 
+          if [ ! -s "build-input/project.zip" ]; then
+            echo "ERROR: project.zip is empty"
+            exit 1
+          fi
+
           if [ ! -f "build-input/signing-key.jks" ]; then
             echo "ERROR: build-input/signing-key.jks not found"
+            exit 1
+          fi
+
+          if [ ! -s "build-input/signing-key.jks" ]; then
+            echo "ERROR: signing-key.jks is empty"
             exit 1
           fi
 
@@ -155,11 +166,11 @@ jobs:
       - name: Validate module
         shell: bash
         run: |
+          MODULE="${{ inputs.module }}"
+
           echo "========================================"
           echo "VALIDATE MODULE"
           echo "========================================"
-
-          MODULE="${{ inputs.module }}"
 
           echo "Module:"
           echo "$MODULE"
@@ -194,12 +205,14 @@ jobs:
       # ==================================================
 
       - name: Extract project
+        shell: bash
         run: |
           echo "========================================"
           echo "EXTRACT PROJECT"
           echo "========================================"
 
           rm -rf android-project
+
           mkdir -p android-project
 
           unzip -q \
@@ -212,9 +225,9 @@ jobs:
           echo "Project files:"
 
           find android-project \
-            -maxdepth 4 \
+            -maxdepth 5 \
             -type f \
-            -print | head -300
+            -print | head -500
 
 
       # ==================================================
@@ -279,6 +292,7 @@ jobs:
       # ==================================================
 
       - name: Show project
+        shell: bash
         run: |
           echo "========================================"
           echo "PROJECT"
@@ -296,7 +310,7 @@ jobs:
           echo "Gradle files:"
 
           find "$PROJECT_DIR" \
-            -maxdepth 5 \
+            -maxdepth 6 \
             \( \
               -name "build.gradle" \
               -o \
@@ -322,6 +336,7 @@ jobs:
       # ==================================================
 
       - name: Check Gradle wrapper
+        shell: bash
         run: |
           echo "========================================"
           echo "GRADLE WRAPPER"
@@ -350,7 +365,9 @@ jobs:
           echo "gradle-wrapper.jar: OK"
 
           echo ""
+
           echo "Wrapper properties:"
+
           cat "$PROJECT_DIR/gradle/wrapper/gradle-wrapper.properties"
 
 
@@ -368,6 +385,7 @@ jobs:
           echo "========================================"
 
           BUILD_FILE="$PROJECT_DIR/$MODULE/build.gradle"
+
           BUILD_KTS_FILE="$PROJECT_DIR/$MODULE/build.gradle.kts"
 
           if [ -f "$BUILD_FILE" ]; then
@@ -375,16 +393,22 @@ jobs:
             echo "Gradle file:"
             echo "$BUILD_FILE"
 
-            echo "SIGNING_BUILD_FILE=$BUILD_FILE" >> "$GITHUB_ENV"
-            echo "SIGNING_BUILD_TYPE=groovy" >> "$GITHUB_ENV"
+            echo "SIGNING_BUILD_FILE=$BUILD_FILE" \
+              >> "$GITHUB_ENV"
+
+            echo "SIGNING_BUILD_TYPE=groovy" \
+              >> "$GITHUB_ENV"
 
           elif [ -f "$BUILD_KTS_FILE" ]; then
 
             echo "Gradle Kotlin file:"
             echo "$BUILD_KTS_FILE"
 
-            echo "SIGNING_BUILD_FILE=$BUILD_KTS_FILE" >> "$GITHUB_ENV"
-            echo "SIGNING_BUILD_TYPE=kotlin" >> "$GITHUB_ENV"
+            echo "SIGNING_BUILD_FILE=$BUILD_KTS_FILE" \
+              >> "$GITHUB_ENV"
+
+            echo "SIGNING_BUILD_TYPE=kotlin" \
+              >> "$GITHUB_ENV"
 
           else
 
@@ -405,6 +429,7 @@ jobs:
       # ==================================================
 
       - name: Prepare signing
+        shell: bash
         run: |
           echo "========================================"
           echo "PREPARE SIGNING"
@@ -606,192 +631,197 @@ jobs:
 
               signing_code = r'''
 
-// ==========================================================
-// ANDROID AIDE AUTOMATIC RELEASE SIGNING
-// ==========================================================
+          // ==========================================================
+          // ANDROID AIDE AUTOMATIC RELEASE SIGNING
+          // ==========================================================
 
-// ANDROID_AIDE_AUTO_SIGNING_BEGIN
+          // ANDROID_AIDE_AUTO_SIGNING_BEGIN
 
-def androidAideSigningFile =
-        rootProject.file("signing.properties")
+          def androidAideSigningFile =
+                  rootProject.file("signing.properties")
 
-def androidAideSigningProperties =
-        new java.util.Properties()
+          if (!androidAideSigningFile.exists()) {
 
-if (androidAideSigningFile.exists()) {
+              throw new GradleException(
+                      "Android AIDE signing.properties not found."
+              )
+          }
 
-    androidAideSigningFile.withInputStream {
-        androidAideSigningProperties.load(it)
-    }
-}
+          def androidAideSigningProperties =
+                  new java.util.Properties()
 
-android {
+          androidAideSigningFile.withInputStream {
 
-    signingConfigs {
+              androidAideSigningProperties.load(it)
 
-        androidAideRelease {
+          }
 
-            if (!androidAideSigningFile.exists()) {
-                throw new GradleException(
-                        "Android AIDE signing.properties not found."
-                )
-            }
+          def androidAideStoreFile =
+                  androidAideSigningProperties.getProperty(
+                          "storeFile"
+                  )
 
-            def androidAideStoreFile =
-                    androidAideSigningProperties.getProperty(
-                            "storeFile"
-                    )
+          def androidAideStorePassword =
+                  androidAideSigningProperties.getProperty(
+                          "storePassword"
+                  )
 
-            def androidAideStorePassword =
-                    androidAideSigningProperties.getProperty(
-                            "storePassword"
-                    )
+          def androidAideKeyAlias =
+                  androidAideSigningProperties.getProperty(
+                          "keyAlias"
+                  )
 
-            def androidAideKeyAlias =
-                    androidAideSigningProperties.getProperty(
-                            "keyAlias"
-                    )
+          def androidAideKeyPassword =
+                  androidAideSigningProperties.getProperty(
+                          "keyPassword"
+                  )
 
-            def androidAideKeyPassword =
-                    androidAideSigningProperties.getProperty(
-                            "keyPassword"
-                    )
+          if (!androidAideStoreFile ||
+              !androidAideStorePassword ||
+              !androidAideKeyAlias ||
+              !androidAideKeyPassword) {
 
-            if (!androidAideStoreFile ||
-                !androidAideStorePassword ||
-                !androidAideKeyAlias ||
-                !androidAideKeyPassword) {
+              throw new GradleException(
+                      "Incomplete Android AIDE signing configuration."
+              )
+          }
 
-                throw new GradleException(
-                        "Incomplete Android AIDE signing configuration."
-                )
-            }
+          android {
 
-            storeFile rootProject.file(
-                    androidAideStoreFile
-            )
+              signingConfigs {
 
-            storePassword androidAideStorePassword
+                  androidAideRelease {
 
-            keyAlias androidAideKeyAlias
+                      storeFile rootProject.file(
+                              androidAideStoreFile
+                      )
 
-            keyPassword androidAideKeyPassword
-        }
-    }
+                      storePassword =
+                              androidAideStorePassword
 
-    buildTypes {
+                      keyAlias =
+                              androidAideKeyAlias
 
-        release {
+                      keyPassword =
+                              androidAideKeyPassword
+                  }
+              }
 
-            signingConfig =
-                    signingConfigs.androidAideRelease
+              buildTypes {
 
-            minifyEnabled false
-        }
-    }
-}
+                  release {
 
-// ANDROID_AIDE_AUTO_SIGNING_END
+                      signingConfig =
+                              signingConfigs.androidAideRelease
 
-'''
+                      minifyEnabled false
+                  }
+              }
+          }
+
+          // ANDROID_AIDE_AUTO_SIGNING_END
+
+          '''
 
 
           elif gradle_type == "kotlin":
 
               signing_code = r'''
 
-// ==========================================================
-// ANDROID AIDE AUTOMATIC RELEASE SIGNING
-// ==========================================================
+          // ==========================================================
+          // ANDROID AIDE AUTOMATIC RELEASE SIGNING
+          // ==========================================================
 
-// ANDROID_AIDE_AUTO_SIGNING_BEGIN
+          // ANDROID_AIDE_AUTO_SIGNING_BEGIN
 
-val androidAideSigningFile =
-    rootProject.file("signing.properties")
+          val androidAideSigningFile =
+              rootProject.file("signing.properties")
 
-val androidAideSigningProperties =
-    java.util.Properties()
+          if (!androidAideSigningFile.exists()) {
 
-if (!androidAideSigningFile.exists()) {
+              throw GradleException(
+                  "Android AIDE signing.properties not found."
+              )
+          }
 
-    throw GradleException(
-        "Android AIDE signing.properties not found."
-    )
-}
+          val androidAideSigningProperties =
+              java.util.Properties()
 
-androidAideSigningFile.inputStream().use {
-    androidAideSigningProperties.load(it)
-}
+          androidAideSigningFile.inputStream().use {
 
-val androidAideStoreFile =
-    androidAideSigningProperties.getProperty(
-        "storeFile"
-    )
+              androidAideSigningProperties.load(it)
 
-val androidAideStorePassword =
-    androidAideSigningProperties.getProperty(
-        "storePassword"
-    )
+          }
 
-val androidAideKeyAlias =
-    androidAideSigningProperties.getProperty(
-        "keyAlias"
-    )
+          val androidAideStoreFile =
+              androidAideSigningProperties.getProperty(
+                  "storeFile"
+              )
 
-val androidAideKeyPassword =
-    androidAideSigningProperties.getProperty(
-        "keyPassword"
-    )
+          val androidAideStorePassword =
+              androidAideSigningProperties.getProperty(
+                  "storePassword"
+              )
 
-if (androidAideStoreFile.isNullOrEmpty() ||
-    androidAideStorePassword.isNullOrEmpty() ||
-    androidAideKeyAlias.isNullOrEmpty() ||
-    androidAideKeyPassword.isNullOrEmpty()) {
+          val androidAideKeyAlias =
+              androidAideSigningProperties.getProperty(
+                  "keyAlias"
+              )
 
-    throw GradleException(
-        "Incomplete Android AIDE signing configuration."
-    )
-}
+          val androidAideKeyPassword =
+              androidAideSigningProperties.getProperty(
+                  "keyPassword"
+              )
 
-android {
+          if (androidAideStoreFile.isNullOrEmpty() ||
+              androidAideStorePassword.isNullOrEmpty() ||
+              androidAideKeyAlias.isNullOrEmpty() ||
+              androidAideKeyPassword.isNullOrEmpty()) {
 
-    signingConfigs {
+              throw GradleException(
+                  "Incomplete Android AIDE signing configuration."
+              )
+          }
 
-        create("androidAideRelease") {
+          android {
 
-            storeFile =
-                rootProject.file(
-                    androidAideStoreFile
-                )
+              signingConfigs {
 
-            storePassword =
-                androidAideStorePassword
+                  create("androidAideRelease") {
 
-            keyAlias =
-                androidAideKeyAlias
+                      storeFile =
+                          rootProject.file(
+                              androidAideStoreFile
+                          )
 
-            keyPassword =
-                androidAideKeyPassword
-        }
-    }
+                      storePassword =
+                          androidAideStorePassword
 
-    buildTypes {
+                      keyAlias =
+                          androidAideKeyAlias
 
-        getByName("release") {
+                      keyPassword =
+                          androidAideKeyPassword
+                  }
+              }
 
-            signingConfig =
-                signingConfigs.getByName(
-                    "androidAideRelease"
-                )
+              buildTypes {
 
-            isMinifyEnabled = false
-        }
-    }
-}
+                  getByName("release") {
 
-// ANDROID_AIDE_AUTO_SIGNING_END
+                      signingConfig =
+                          signingConfigs.getByName(
+                              "androidAideRelease"
+                          )
 
-'''
+                      isMinifyEnabled = false
+                  }
+              }
+          }
+
+          // ANDROID_AIDE_AUTO_SIGNING_END
+
+          '''
 
 
           else:
@@ -837,19 +867,19 @@ android {
           fi
 
           if ! grep -q \
-            "signingConfig" \
+            "ANDROID_AIDE_AUTO_SIGNING_END" \
             "$SIGNING_BUILD_FILE"; then
 
-            echo "ERROR: signingConfig not found."
+            echo "ERROR: signing injection is incomplete."
             exit 1
 
           fi
 
           if ! grep -q \
-            "androidAideRelease" \
+            "signingConfig" \
             "$SIGNING_BUILD_FILE"; then
 
-            echo "ERROR: androidAideRelease not found."
+            echo "ERROR: signingConfig not found."
             exit 1
 
           fi
@@ -880,9 +910,13 @@ android {
             exit 1
           fi
 
-          if [ ! -s "$PROJECT_DIR/.androidaide/signing/release-key.jks" ]; then
+          if [ ! -s \
+            "$PROJECT_DIR/.androidaide/signing/release-key.jks"
+          ]; then
+
             echo "ERROR: keystore missing"
             exit 1
+
           fi
 
           echo "Signing files exist."
@@ -903,13 +937,16 @@ android {
       # ==================================================
 
       - name: Make Gradle executable
+        shell: bash
         run: |
           chmod +x \
             "$PROJECT_DIR/gradlew"
 
+          echo "gradlew is executable."
+
 
       # ==================================================
-      # CHECK GRADLE VERSION
+      # GRADLE VERSION
       # ==================================================
 
       - name: Check Gradle version
@@ -928,6 +965,7 @@ android {
 
       - name: Gradle clean
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
           echo "========================================"
           echo "GRADLE CLEAN"
@@ -1000,6 +1038,7 @@ android {
           echo "========================================"
 
           echo ""
+
           echo "APK files:"
 
           find . \
@@ -1008,6 +1047,7 @@ android {
             -print || true
 
           echo ""
+
           echo "AAB files:"
 
           find . \
@@ -1022,6 +1062,7 @@ android {
 
       - name: Find signed APK
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
           echo "========================================"
           echo "FIND SIGNED APK"
@@ -1030,6 +1071,7 @@ android {
           APK_DIR="${{ inputs.module }}/build/outputs/apk/release"
 
           if [ ! -d "$APK_DIR" ]; then
+
             echo "ERROR: APK release directory not found"
 
             find . \
@@ -1038,7 +1080,15 @@ android {
               -print || true
 
             exit 1
+
           fi
+
+          echo "APK files:"
+
+          find "$APK_DIR" \
+            -type f \
+            -name "*.apk" \
+            -print || true
 
           APK_PATH=$(find "$APK_DIR" \
             -type f \
@@ -1048,15 +1098,20 @@ android {
             -quit)
 
           if [ -z "$APK_PATH" ]; then
+
             echo "ERROR: SIGNED APK NOT FOUND."
+
+            echo ""
 
             find "$APK_DIR" \
               -type f \
               -print || true
 
             exit 1
+
           fi
 
+          echo ""
           echo "SIGNED APK FOUND:"
           echo "$APK_PATH"
 
@@ -1076,6 +1131,7 @@ android {
 
       - name: Find signed AAB
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
           echo "========================================"
           echo "FIND SIGNED AAB"
@@ -1084,6 +1140,7 @@ android {
           AAB_DIR="${{ inputs.module }}/build/outputs/bundle/release"
 
           if [ ! -d "$AAB_DIR" ]; then
+
             echo "ERROR: AAB release directory not found"
 
             find . \
@@ -1092,7 +1149,15 @@ android {
               -print || true
 
             exit 1
+
           fi
+
+          echo "AAB files:"
+
+          find "$AAB_DIR" \
+            -type f \
+            -name "*.aab" \
+            -print || true
 
           AAB_PATH=$(find "$AAB_DIR" \
             -type f \
@@ -1101,15 +1166,20 @@ android {
             -quit)
 
           if [ -z "$AAB_PATH" ]; then
+
             echo "ERROR: SIGNED AAB NOT FOUND."
+
+            echo ""
 
             find "$AAB_DIR" \
               -type f \
               -print || true
 
             exit 1
+
           fi
 
+          echo ""
           echo "SIGNED AAB FOUND:"
           echo "$AAB_PATH"
 
@@ -1197,9 +1267,11 @@ android {
           SOURCE_APK="$APK_PATH"
 
           if [ "$SOURCE_APK" != "$GITHUB_WORKSPACE/$FINAL_APK" ]; then
+
             cp \
               "$SOURCE_APK" \
               "$FINAL_APK"
+
           fi
 
           if [ ! -s "$FINAL_APK" ]; then
@@ -1234,9 +1306,11 @@ android {
           SOURCE_AAB="$AAB_PATH"
 
           if [ "$SOURCE_AAB" != "$GITHUB_WORKSPACE/$FINAL_AAB" ]; then
+
             cp \
               "$SOURCE_AAB" \
               "$FINAL_AAB"
+
           fi
 
           if [ ! -s "$FINAL_AAB" ]; then
@@ -1355,6 +1429,7 @@ android {
           echo "$APK_PATH"
 
           echo ""
+
           ls -lh "$APK_PATH"
 
           echo ""
@@ -1362,14 +1437,15 @@ android {
           echo "$AAB_PATH"
 
           echo ""
-          ls -lh "$AAB_PATH"
 
-          echo ""
-          echo "========================================"
-          echo "APK + AAB BUILD SUCCESSFUL"
-          echo "========================================"
+          ls -lh "$AAB_PATH"
 
           echo ""
           echo "Artifacts:"
           echo "  AndroidAIDE-Signed-APK"
           echo "  AndroidAIDE-Signed-AAB"
+
+          echo ""
+          echo "========================================"
+          echo "APK + AAB BUILD SUCCESSFUL"
+          echo "========================================"

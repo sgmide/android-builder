@@ -117,6 +117,16 @@ jobs:
           sdkmanager --list_installed | \
             grep "build-tools;35.0.0" || true
 
+          echo ""
+
+          echo "apksigner:"
+          command -v apksigner || true
+
+          echo ""
+
+          echo "jarsigner:"
+          command -v jarsigner || true
+
 
       # ==================================================
       # CHECK BUILD INPUT
@@ -966,14 +976,14 @@ jobs:
 
 
       # ==================================================
-      # VERIFY APK
+      # VERIFY APK FILE
       # ==================================================
 
-      - name: Verify APK
+      - name: Verify APK file
         run: |
 
           echo "========================================"
-          echo "VERIFY APK"
+          echo "VERIFY APK FILE"
           echo "========================================"
 
           if [ ! -f "$APK_PATH" ]; then
@@ -992,20 +1002,97 @@ jobs:
 
           fi
 
-          echo "Signed APK verified:"
-
+          echo "APK exists:"
           ls -lh "$APK_PATH"
 
 
       # ==================================================
-      # VERIFY AAB
+      # VERIFY APK SIGNATURE
       # ==================================================
 
-      - name: Verify AAB
+      - name: Verify APK signature
         run: |
 
           echo "========================================"
-          echo "VERIFY AAB"
+          echo "VERIFY APK SIGNATURE"
+          echo "========================================"
+
+          if [ ! -f "$APK_PATH" ]; then
+
+            echo "ERROR: APK does not exist"
+
+            exit 1
+
+          fi
+
+          echo ""
+
+          echo "APK:"
+          echo "$APK_PATH"
+
+          echo ""
+
+          echo "Running apksigner..."
+
+          if ! apksigner verify \
+            --verbose \
+            "$APK_PATH" \
+            > apk-signature.txt 2>&1; then
+
+            echo ""
+            echo "========================================"
+            echo "APK SIGNATURE VERIFICATION FAILED"
+            echo "========================================"
+
+            echo ""
+
+            cat apk-signature.txt
+
+            exit 1
+
+          fi
+
+          echo ""
+
+          cat apk-signature.txt
+
+          echo ""
+
+          if ! grep -q \
+            "Verified using v1 scheme" \
+            apk-signature.txt && \
+             ! grep -q \
+            "Verified using v2 scheme" \
+            apk-signature.txt && \
+             ! grep -q \
+            "Verified using v3 scheme" \
+            apk-signature.txt && \
+             ! grep -q \
+            "Verified using v4 scheme" \
+            apk-signature.txt; then
+
+            echo ""
+            echo "ERROR: APK signing scheme was not detected."
+
+            exit 1
+
+          fi
+
+          echo ""
+          echo "========================================"
+          echo "APK SIGNATURE VERIFIED"
+          echo "========================================"
+
+
+      # ==================================================
+      # VERIFY AAB FILE
+      # ==================================================
+
+      - name: Verify AAB file
+        run: |
+
+          echo "========================================"
+          echo "VERIFY AAB FILE"
           echo "========================================"
 
           if [ ! -f "$AAB_PATH" ]; then
@@ -1024,9 +1111,87 @@ jobs:
 
           fi
 
-          echo "Signed AAB verified:"
-
+          echo "AAB exists:"
           ls -lh "$AAB_PATH"
+
+
+      # ==================================================
+      # VERIFY AAB SIGNATURE
+      # ==================================================
+
+      - name: Verify AAB signature
+        run: |
+
+          echo "========================================"
+          echo "VERIFY AAB SIGNATURE"
+          echo "========================================"
+
+          if [ ! -f "$AAB_PATH" ]; then
+
+            echo "ERROR: AAB does not exist"
+
+            exit 1
+
+          fi
+
+          echo ""
+
+          echo "AAB:"
+          echo "$AAB_PATH"
+
+          echo ""
+
+          echo "Running jarsigner..."
+
+          if ! jarsigner \
+            -verify \
+            -verbose \
+            -certs \
+            "$AAB_PATH" \
+            > aab-signature.txt 2>&1; then
+
+            echo ""
+            echo "========================================"
+            echo "AAB SIGNATURE VERIFICATION FAILED"
+            echo "========================================"
+
+            echo ""
+
+            cat aab-signature.txt
+
+            exit 1
+
+          fi
+
+          echo ""
+
+          cat aab-signature.txt
+
+          echo ""
+
+          if ! grep -qi \
+            "jar verified" \
+            aab-signature.txt; then
+
+            echo ""
+            echo "ERROR: AAB is not properly signed."
+
+            exit 1
+
+          fi
+
+          echo ""
+          echo "========================================"
+          echo "AAB SIGNATURE VERIFIED"
+          echo "========================================"
+
+          echo ""
+
+          echo "Certificate information:"
+
+          grep -E \
+            "X.509|CN=|SHA256|SHA-256|jar verified" \
+            aab-signature.txt || true
 
 
       # ==================================================
@@ -1096,5 +1261,12 @@ jobs:
           echo ""
 
           echo "========================================"
+          echo "APK SIGNATURE: VERIFIED"
+          echo "AAB SIGNATURE: VERIFIED"
+          echo "========================================"
+
+          echo ""
+
           echo "APK + AAB BUILD SUCCESSFUL"
+
           echo "========================================"

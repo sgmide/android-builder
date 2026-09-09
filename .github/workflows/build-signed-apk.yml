@@ -1134,83 +1134,6 @@ jobs:
 
 
       # ==================================================
-      # STANDARD GRADLE OUTPUT STRUCTURE
-      # ==================================================
-
-      - name: Verify standard Gradle output structure
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-
-          echo "========================================"
-          echo "STANDARD GRADLE OUTPUT STRUCTURE"
-          echo "========================================"
-
-          APK_STANDARD_PATH="${{ inputs.module }}/build/outputs/apk/release/app-release.apk"
-
-          AAB_STANDARD_PATH="${{ inputs.module }}/build/outputs/bundle/release/app-release.aab"
-
-          echo ""
-          echo "Expected APK:"
-          echo "$APK_STANDARD_PATH"
-
-          echo ""
-          echo "Expected AAB:"
-          echo "$AAB_STANDARD_PATH"
-
-          echo ""
-
-          if [ ! -f "$APK_STANDARD_PATH" ]; then
-
-            echo "ERROR: standard APK output not found:"
-            echo "$APK_STANDARD_PATH"
-
-            echo ""
-            echo "APK directory contents:"
-
-            find "${{ inputs.module }}/build/outputs/apk/release" \
-              -maxdepth 1 \
-              -type f \
-              -print 2>/dev/null || true
-
-            exit 1
-
-          fi
-
-          if [ ! -f "$AAB_STANDARD_PATH" ]; then
-
-            echo "ERROR: standard AAB output not found:"
-            echo "$AAB_STANDARD_PATH"
-
-            echo ""
-            echo "AAB directory contents:"
-
-            find "${{ inputs.module }}/build/outputs/bundle/release" \
-              -maxdepth 1 \
-              -type f \
-              -print 2>/dev/null || true
-
-            exit 1
-
-          fi
-
-          echo "========================================"
-          echo "STANDARD OUTPUTS FOUND"
-          echo "========================================"
-
-          echo ""
-          echo "APK:"
-          echo "$APK_STANDARD_PATH"
-
-          ls -lh "$APK_STANDARD_PATH"
-
-          echo ""
-          echo "AAB:"
-          echo "$AAB_STANDARD_PATH"
-
-          ls -lh "$AAB_STANDARD_PATH"
-
-
-      # ==================================================
       # UPLOAD SIGNED APK
       # ==================================================
 
@@ -1273,18 +1196,6 @@ jobs:
           echo ""
 
           ls -lh "$AAB_PATH"
-
-          echo ""
-
-          echo "========================================"
-          echo "STANDARD GRADLE OUTPUT"
-          echo "========================================"
-
-          echo ""
-
-          echo "${{ inputs.module }}/build/outputs/apk/release/app-release.apk"
-
-          echo "${{ inputs.module }}/build/outputs/bundle/release/app-release.aab"
 
           echo ""
 

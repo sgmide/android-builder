@@ -66,7 +66,9 @@ jobs:
           echo "========================================"
           echo "JAVA"
           echo "========================================"
+
           java -version
+
           echo ""
           echo "JAVA_HOME:"
           echo "$JAVA_HOME"
@@ -96,6 +98,10 @@ jobs:
 
       - name: Check Android SDK
         run: |
+          echo "========================================"
+          echo "CHECK ANDROID SDK"
+          echo "========================================"
+
           echo "ANDROID_HOME:"
           echo "$ANDROID_HOME"
 
@@ -148,7 +154,12 @@ jobs:
       - name: Validate module
         shell: bash
         run: |
+
           MODULE="${{ inputs.module }}"
+
+          echo "========================================"
+          echo "VALIDATE MODULE"
+          echo "========================================"
 
           echo "Module:"
           echo "$MODULE"
@@ -159,22 +170,27 @@ jobs:
           fi
 
           case "$MODULE" in
+
             *..*)
               echo "ERROR: invalid module"
               exit 1
               ;;
+
             */*)
               echo "ERROR: invalid module"
               exit 1
               ;;
+
             *\\*)
               echo "ERROR: invalid module"
               exit 1
               ;;
+
             *:*)
               echo "ERROR: invalid module"
               exit 1
               ;;
+
           esac
 
 
@@ -199,6 +215,7 @@ jobs:
           echo "Project extracted successfully."
 
           echo ""
+
           echo "Project files:"
 
           find android-project \
@@ -243,6 +260,7 @@ jobs:
               echo "ERROR: settings.gradle or settings.gradle.kts not found."
 
               echo ""
+
               echo "Searching project:"
 
               find android-project \
@@ -261,6 +279,7 @@ jobs:
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
           echo ""
+
           echo "PROJECT_DIR:"
           echo "$PROJECT_DIR"
 
@@ -416,7 +435,6 @@ jobs:
             echo "Expected:"
 
             echo "$BUILD_FILE"
-
             echo "$BUILD_KTS_FILE"
 
             exit 1
@@ -511,259 +529,105 @@ jobs:
             -storepass "$STORE_PASSWORD" \
             > /dev/null
 
-          if [ $? -ne 0 ]; then
-
-            echo "ERROR: invalid keystore or password"
-
-            exit 1
-
-          fi
-
           echo "Keystore is valid."
 
 
       # ==================================================
-      # AUTOMATIC SIGNING INJECTION
+      # CREATE TEMPORARY GRADLE SIGNING INIT SCRIPT
       # ==================================================
 
-      - name: Inject automatic release signing
-        shell: bash
+      - name: Create temporary signing init script
         run: |
 
           echo "========================================"
-          echo "AUTOMATIC SIGNING INJECTION"
+          echo "CREATE TEMPORARY GRADLE SIGNING SCRIPT"
           echo "========================================"
 
-          echo "Gradle file:"
-          echo "$SIGNING_BUILD_FILE"
+          cat > \
+            "$PROJECT_DIR/android-aide-signing.init.gradle" <<'EOF'
 
-          echo ""
+          allprojects {
 
-          python3 - "$SIGNING_BUILD_FILE" "$SIGNING_BUILD_TYPE" <<'PY'
+              afterEvaluate { project ->
 
-          import sys
+                  if (project.hasProperty("android")) {
 
-          path = sys.argv[1]
-          gradle_type = sys.argv[2]
-
-          with open(path, "r", encoding="utf-8") as f:
-              text = f.read()
-
-          marker_begin = "ANDROID_AIDE_AUTO_SIGNING_BEGIN"
-          marker_end = "ANDROID_AIDE_AUTO_SIGNING_END"
-
-          if marker_begin in text:
-              print("Automatic signing already exists.")
-              sys.exit(0)
-
-          if gradle_type == "groovy":
-
-              signing_code = r'''
-
-          // ==========================================================
-          // ANDROID AIDE AUTOMATIC RELEASE SIGNING
-          // ==========================================================
-
-          // ANDROID_AIDE_AUTO_SIGNING_BEGIN
-
-          def androidAideSigningFile =
-                  rootProject.file("signing.properties")
-
-          def androidAideSigningProperties =
-                  new java.util.Properties()
-
-          if (androidAideSigningFile.exists()) {
-
-              androidAideSigningFile.withInputStream {
-
-                  androidAideSigningProperties.load(it)
-
-              }
-          }
-
-          android {
-
-              signingConfigs {
-
-                  androidAideRelease {
-
-                      if (androidAideSigningFile.exists()) {
-
-                          storeFile rootProject.file(
-                                  androidAideSigningProperties.getProperty(
-                                          "storeFile"
-                                  )
+                      def signingFile =
+                          project.rootProject.file(
+                              "signing.properties"
                           )
 
-                          storePassword =
-                                  androidAideSigningProperties.getProperty(
+                      if (signingFile.exists()) {
+
+                          def props =
+                              new java.util.Properties()
+
+                          signingFile.withInputStream {
+
+                              props.load(it)
+
+                          }
+
+                          project.android.signingConfigs {
+
+                              androidAideRelease {
+
+                                  storeFile =
+                                      project.rootProject.file(
+                                          props.getProperty(
+                                              "storeFile"
+                                          )
+                                      )
+
+                                  storePassword =
+                                      props.getProperty(
                                           "storePassword"
-                                  )
+                                      )
 
-                          keyAlias =
-                                  androidAideSigningProperties.getProperty(
+                                  keyAlias =
+                                      props.getProperty(
                                           "keyAlias"
-                                  )
+                                      )
 
-                          keyPassword =
-                                  androidAideSigningProperties.getProperty(
+                                  keyPassword =
+                                      props.getProperty(
                                           "keyPassword"
-                                  )
+                                      )
+                              }
+                          }
+
+                          project.android.buildTypes {
+
+                              release {
+
+                                  signingConfig =
+                                      project.android
+                                          .signingConfigs
+                                          .androidAideRelease
+
+                                  minifyEnabled false
+                              }
+                          }
                       }
                   }
               }
-
-              buildTypes {
-
-                  release {
-
-                      signingConfig =
-                              signingConfigs.androidAideRelease
-
-                      minifyEnabled false
-                  }
-              }
           }
 
-          // ANDROID_AIDE_AUTO_SIGNING_END
+          EOF
 
-          '''
+          chmod 600 \
+            "$PROJECT_DIR/android-aide-signing.init.gradle"
 
-          elif gradle_type == "kotlin":
-
-              signing_code = r'''
-
-          // ==========================================================
-          // ANDROID AIDE AUTOMATIC RELEASE SIGNING
-          // ==========================================================
-
-          // ANDROID_AIDE_AUTO_SIGNING_BEGIN
-
-          val androidAideSigningFile =
-              rootProject.file("signing.properties")
-
-          val androidAideSigningProperties =
-              java.util.Properties()
-
-          if (androidAideSigningFile.exists()) {
-
-              androidAideSigningFile.inputStream().use {
-
-                  androidAideSigningProperties.load(it)
-
-              }
-          }
-
-          android {
-
-              signingConfigs {
-
-                  create("androidAideRelease") {
-
-                      if (androidAideSigningFile.exists()) {
-
-                          storeFile =
-                              rootProject.file(
-                                  androidAideSigningProperties.getProperty(
-                                      "storeFile"
-                                  )
-                              )
-
-                          storePassword =
-                              androidAideSigningProperties.getProperty(
-                                  "storePassword"
-                              )
-
-                          keyAlias =
-                              androidAideSigningProperties.getProperty(
-                                  "keyAlias"
-                              )
-
-                          keyPassword =
-                              androidAideSigningProperties.getProperty(
-                                  "keyPassword"
-                              )
-                      }
-                  }
-              }
-
-              buildTypes {
-
-                  getByName("release") {
-
-                      signingConfig =
-                          signingConfigs.getByName(
-                              "androidAideRelease"
-                          )
-
-                      isMinifyEnabled = false
-                  }
-              }
-          }
-
-          // ANDROID_AIDE_AUTO_SIGNING_END
-
-          '''
-
-          else:
-
-              print("ERROR: unsupported Gradle type")
-              sys.exit(1)
-
-          with open(path, "a", encoding="utf-8") as f:
-              f.write(signing_code)
-
-          print("Automatic release signing injected successfully.")
-
-          PY
-
-
-      # ==================================================
-      # VERIFY SIGNING INJECTION
-      # ==================================================
-
-      - name: Verify signing injection
-        shell: bash
-        run: |
-
-          echo "========================================"
-          echo "VERIFY SIGNING INJECTION"
-          echo "========================================"
-
-          if ! grep -q \
-            "ANDROID_AIDE_AUTO_SIGNING_BEGIN" \
-            "$SIGNING_BUILD_FILE"; then
-
-            echo "ERROR: automatic signing was not injected."
-
-            exit 1
-
-          fi
-
-          if ! grep -q \
-            "signingConfig" \
-            "$SIGNING_BUILD_FILE"; then
-
-            echo "ERROR: signingConfig not found."
-
-            exit 1
-
-          fi
-
-          echo "Automatic signing configuration detected."
+          echo "Temporary signing init script created."
 
           echo ""
 
-          echo "Injected configuration:"
-
-          grep -n \
-            -A 80 \
-            "ANDROID_AIDE_AUTO_SIGNING_BEGIN" \
-            "$SIGNING_BUILD_FILE" || true
+          ls -lh \
+            "$PROJECT_DIR/android-aide-signing.init.gradle"
 
 
       # ==================================================
-      # SHOW SIGNING PROPERTIES
+      # VERIFY SIGNING FILES
       # ==================================================
 
       - name: Verify signing files
@@ -792,6 +656,16 @@ jobs:
 
           fi
 
+          if [ ! -s \
+            "$PROJECT_DIR/android-aide-signing.init.gradle"
+          ]; then
+
+            echo "ERROR: signing init script missing"
+
+            exit 1
+
+          fi
+
           echo "Signing files exist."
 
           echo ""
@@ -811,6 +685,13 @@ jobs:
           ls -lh \
             "$PROJECT_DIR/.androidaide/signing/release-key.jks"
 
+          echo ""
+
+          echo "Init script:"
+
+          ls -lh \
+            "$PROJECT_DIR/android-aide-signing.init.gradle"
+
 
       # ==================================================
       # MAKE GRADLE EXECUTABLE
@@ -818,6 +699,10 @@ jobs:
 
       - name: Make Gradle executable
         run: |
+
+          echo "========================================"
+          echo "MAKE GRADLE EXECUTABLE"
+          echo "========================================"
 
           chmod +x \
             "$PROJECT_DIR/gradlew"
@@ -854,7 +739,6 @@ jobs:
           echo "========================================"
 
           ./gradlew clean \
-            -PsigningPropertiesFile=signing.properties \
             --stacktrace
 
 
@@ -883,7 +767,7 @@ jobs:
           ./gradlew \
             ":${MODULE}:assembleRelease" \
             ":${MODULE}:bundleRelease" \
-            -PsigningPropertiesFile=signing.properties \
+            --init-script android-aide-signing.init.gradle \
             --stacktrace \
             --info
 
@@ -978,10 +862,6 @@ jobs:
             find "$APK_DIR" \
               -type f \
               -print || true
-
-            echo ""
-
-            echo "Release APK was not signed."
 
             exit 1
 
@@ -1104,6 +984,14 @@ jobs:
 
           fi
 
+          if [ ! -s "$APK_PATH" ]; then
+
+            echo "ERROR: APK is empty"
+
+            exit 1
+
+          fi
+
           echo "Signed APK verified:"
 
           ls -lh "$APK_PATH"
@@ -1123,6 +1011,14 @@ jobs:
           if [ ! -f "$AAB_PATH" ]; then
 
             echo "ERROR: AAB does not exist"
+
+            exit 1
+
+          fi
+
+          if [ ! -s "$AAB_PATH" ]; then
+
+            echo "ERROR: AAB is empty"
 
             exit 1
 
@@ -1202,4 +1098,3 @@ jobs:
           echo "========================================"
           echo "APK + AAB BUILD SUCCESSFUL"
           echo "========================================"
-

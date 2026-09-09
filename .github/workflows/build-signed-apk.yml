@@ -40,53 +40,43 @@ jobs:
 
     timeout-minutes: 30
 
+
     steps:
 
-      # ==================================================
+      # ==========================================================
       # CHECKOUT
-      # ==================================================
+      # ==========================================================
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
 
-      # ==================================================
+      # ==========================================================
       # JAVA 17
-      # ==================================================
+      # ==========================================================
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
 
-      - name: Check Java
-        run: |
-          echo "========================================"
-          echo "JAVA"
-          echo "========================================"
-          java -version
-          echo ""
-          echo "JAVA_HOME:"
-          echo "$JAVA_HOME"
-
-
-      # ==================================================
+      # ==========================================================
       # ANDROID SDK
-      # ==================================================
+      # ==========================================================
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
 
+      # ==========================================================
+      # INSTALL SDK 35
+      # ==========================================================
+
       - name: Install Android SDK 35
         run: |
-          echo "========================================"
-          echo "ANDROID SDK"
-          echo "========================================"
-
-          yes | sdkmanager --licenses || true
+          yes | sdkmanager --licenses >/dev/null || true
 
           sdkmanager \
             "platform-tools" \
@@ -94,130 +84,73 @@ jobs:
             "build-tools;35.0.0"
 
 
-      - name: Check Android SDK
+      # ==========================================================
+      # CHECK BUILD INPUTS
+      # ==========================================================
+
+      - name: Check build inputs
+        shell: bash
+        env:
+          MODULE: ${{ inputs.module }}
         run: |
-          echo "ANDROID_HOME:"
-          echo "$ANDROID_HOME"
 
-          echo ""
+          set -e
 
-          echo "Android platform:"
-          sdkmanager --list_installed | \
-            grep "platforms;android-35" || true
-
-          echo ""
-
-          echo "Build tools:"
-          sdkmanager --list_installed | \
-            grep "build-tools;35.0.0" || true
-
-
-      # ==================================================
-      # CHECK BUILD INPUT
-      # ==================================================
-
-      - name: Check build input
-        run: |
-          echo "========================================"
-          echo "CHECK BUILD INPUT"
-          echo "========================================"
+          echo "Checking build input files..."
 
           if [ ! -f "build-input/project.zip" ]; then
-            echo "ERROR: build-input/project.zip not found"
+            echo "ERROR: build-input/project.zip not found."
             exit 1
           fi
 
           if [ ! -f "build-input/signing-key.jks" ]; then
-            echo "ERROR: build-input/signing-key.jks not found"
+            echo "ERROR: build-input/signing-key.jks not found."
+            exit 1
+          fi
+
+          if [ -z "$MODULE" ]; then
+            echo "ERROR: module is empty."
             exit 1
           fi
 
           echo "Project ZIP:"
           ls -lh "build-input/project.zip"
 
-          echo ""
-
           echo "Keystore:"
           ls -lh "build-input/signing-key.jks"
 
-
-      # ==================================================
-      # VALIDATE MODULE
-      # ==================================================
-
-      - name: Validate module
-        shell: bash
-        run: |
-          MODULE="${{ inputs.module }}"
-
-          echo "Module:"
-          echo "$MODULE"
-
-          if [ -z "$MODULE" ]; then
-            echo "ERROR: module is empty"
-            exit 1
-          fi
-
-          case "$MODULE" in
-            *..*)
-              echo "ERROR: invalid module"
-              exit 1
-              ;;
-            */*)
-              echo "ERROR: invalid module"
-              exit 1
-              ;;
-            *\\*)
-              echo "ERROR: invalid module"
-              exit 1
-              ;;
-            *:*)
-              echo "ERROR: invalid module"
-              exit 1
-              ;;
-          esac
+          echo "Module: $MODULE"
 
 
-      # ==================================================
-      # EXTRACT PROJECT
-      # ==================================================
+      # ==========================================================
+      # PREPARE PROJECT
+      # ==========================================================
 
       - name: Extract project
+        shell: bash
         run: |
-          echo "========================================"
-          echo "EXTRACT PROJECT"
-          echo "========================================"
+
+          set -e
 
           rm -rf android-project
 
           mkdir -p android-project
 
-          unzip -q \
-            "build-input/project.zip" \
-            -d android-project
+          unzip -q "build-input/project.zip" -d android-project
 
-          echo "Project extracted successfully."
-
-          echo ""
-          echo "Project files:"
-
-          find android-project \
-            -maxdepth 4 \
-            -type f \
-            -print | head -300
+          echo "Extracted project:"
+          find android-project -maxdepth 3 -type f | head -100
 
 
-      # ==================================================
-      # DETECT PROJECT DIRECTORY
-      # ==================================================
+      # ==========================================================
+      # DETECT PROJECT ROOT
+      # ==========================================================
 
-      - name: Detect project directory
+      - name: Detect Gradle project root
         shell: bash
         run: |
 
-          echo "========================================"
-          echo "DETECT PROJECT DIRECTORY"
-          echo "========================================"
+          set -e
 
           if [ -f "android-project/settings.gradle" ]; then
 
@@ -227,978 +160,911 @@ jobs:
 
             PROJECT_DIR="android-project"
 
+          elif [ -f "android-project/project/settings.gradle" ]; then
+
+            PROJECT_DIR="android-project/project"
+
+          elif [ -f "android-project/project/settings.gradle.kts" ]; then
+
+            PROJECT_DIR="android-project/project"
+
           else
 
-            FOUND=$(find android-project \
-              -maxdepth 8 \
-              \( \
-                -name "settings.gradle" \
-                -o \
-                -name "settings.gradle.kts" \
-              \) \
-              -print -quit)
+            SETTINGS_FILE=$(find android-project \
+              -maxdepth 4 \
+              \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+              -type f \
+              | head -1)
 
-            if [ -z "$FOUND" ]; then
-
+            if [ -z "$SETTINGS_FILE" ]; then
               echo "ERROR: settings.gradle or settings.gradle.kts not found."
-
-              echo ""
-              echo "Searching project:"
-
-              find android-project \
-                -maxdepth 8 \
-                -type f \
-                -print | head -500
-
               exit 1
-
             fi
 
-            PROJECT_DIR=$(dirname "$FOUND")
+            PROJECT_DIR=$(dirname "$SETTINGS_FILE")
 
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo ""
-          echo "PROJECT_DIR:"
-          echo "$PROJECT_DIR"
-
-
-      # ==================================================
-      # SHOW PROJECT
-      # ==================================================
-
-      - name: Show project
-        run: |
-
-          echo "========================================"
-          echo "PROJECT"
-          echo "========================================"
-
-          echo "Project directory:"
+          echo "Gradle project root:"
           echo "$PROJECT_DIR"
 
           echo ""
-
+          echo "Project files:"
           ls -la "$PROJECT_DIR"
 
-          echo ""
 
-          echo "Gradle files:"
+      # ==========================================================
+      # VALIDATE MODULE
+      # ==========================================================
 
-          find "$PROJECT_DIR" \
-            -maxdepth 5 \
-            \( \
-              -name "build.gradle" \
-              -o \
-              -name "build.gradle.kts" \
-              -o \
-              -name "settings.gradle" \
-              -o \
-              -name "settings.gradle.kts" \
-              -o \
-              -name "gradlew" \
-              -o \
-              -name "gradlew.bat" \
-              -o \
-              -name "gradle-wrapper.properties" \
-              -o \
-              -name "gradle-wrapper.jar" \
-            \) \
-            -print
-
-
-      # ==================================================
-      # CHECK GRADLE WRAPPER
-      # ==================================================
-
-      - name: Check Gradle wrapper
+      - name: Validate Gradle module
+        shell: bash
+        env:
+          MODULE: ${{ inputs.module }}
         run: |
 
-          echo "========================================"
-          echo "GRADLE WRAPPER"
-          echo "========================================"
+          set -e
 
-          if [ ! -f "$PROJECT_DIR/gradlew" ]; then
+          MODULE_DIR="$PROJECT_DIR/$MODULE"
 
-            echo "ERROR: gradlew not found"
+          echo "Checking module:"
+          echo "$MODULE_DIR"
 
+          if [ ! -d "$MODULE_DIR" ]; then
+            echo "ERROR: module directory does not exist:"
+            echo "$MODULE_DIR"
             exit 1
-
           fi
 
-          if [ ! -f \
-            "$PROJECT_DIR/gradle/wrapper/gradle-wrapper.properties"
-          ]; then
+          if [ -f "$MODULE_DIR/build.gradle" ]; then
+            echo "Found:"
+            echo "$MODULE_DIR/build.gradle"
 
-            echo "ERROR: gradle-wrapper.properties not found"
+          elif [ -f "$MODULE_DIR/build.gradle.kts" ]; then
+            echo "Found:"
+            echo "$MODULE_DIR/build.gradle.kts"
 
+          else
+            echo "ERROR: Gradle build file not found in:"
+            echo "$MODULE_DIR"
             exit 1
-
           fi
 
-          if [ ! -f \
-            "$PROJECT_DIR/gradle/wrapper/gradle-wrapper.jar"
-          ]; then
 
-            echo "ERROR: gradle-wrapper.jar not found"
+      # ==========================================================
+      # CHECK GRADLE WRAPPER
+      # ==========================================================
 
-            echo ""
-
-            echo "Gradle wrapper directory:"
-
-            ls -la \
-              "$PROJECT_DIR/gradle/wrapper" || true
-
-            exit 1
-
-          fi
-
-          echo "gradlew: OK"
-          echo "gradle-wrapper.properties: OK"
-          echo "gradle-wrapper.jar: OK"
-
-          echo ""
-
-          echo "Wrapper properties:"
-
-          cat \
-            "$PROJECT_DIR/gradle/wrapper/gradle-wrapper.properties"
-
-
-      # ==================================================
-      # FIND MODULE GRADLE FILE
-      # ==================================================
-
-      - name: Find module Gradle file
+      - name: Check Gradle wrapper
         shell: bash
         run: |
 
-          MODULE="${{ inputs.module }}"
+          set -e
 
-          echo "========================================"
-          echo "FIND MODULE GRADLE FILE"
-          echo "========================================"
+          if [ ! -f "$PROJECT_DIR/gradlew" ]; then
+            echo "ERROR: gradlew not found."
+            exit 1
+          fi
 
-          BUILD_FILE="$PROJECT_DIR/$MODULE/build.gradle"
+          if [ ! -f "$PROJECT_DIR/gradle/wrapper/gradle-wrapper.properties" ]; then
+            echo "ERROR: gradle-wrapper.properties not found."
+            exit 1
+          fi
 
-          BUILD_KTS_FILE="$PROJECT_DIR/$MODULE/build.gradle.kts"
+          chmod +x "$PROJECT_DIR/gradlew"
 
-          if [ -f "$BUILD_FILE" ]; then
+          echo "Gradle wrapper found."
 
-            echo "Gradle file:"
-            echo "$BUILD_FILE"
+          grep -n "distributionUrl" \
+            "$PROJECT_DIR/gradle/wrapper/gradle-wrapper.properties" \
+            || true
 
-            echo "SIGNING_BUILD_FILE=$BUILD_FILE" \
-              >> "$GITHUB_ENV"
 
-            echo "SIGNING_BUILD_TYPE=groovy" \
-              >> "$GITHUB_ENV"
+      # ==========================================================
+      # DETECT MODULE GRADLE FILE
+      # ==========================================================
 
-          elif [ -f "$BUILD_KTS_FILE" ]; then
+      - name: Detect Gradle build file type
+        shell: bash
+        env:
+          MODULE: ${{ inputs.module }}
+        run: |
 
-            echo "Gradle Kotlin file:"
-            echo "$BUILD_KTS_FILE"
+          set -e
 
-            echo "SIGNING_BUILD_FILE=$BUILD_KTS_FILE" \
-              >> "$GITHUB_ENV"
+          MODULE_DIR="$PROJECT_DIR/$MODULE"
 
-            echo "SIGNING_BUILD_TYPE=kotlin" \
-              >> "$GITHUB_ENV"
+          if [ -f "$MODULE_DIR/build.gradle" ]; then
+
+            SIGNING_BUILD_FILE="$MODULE_DIR/build.gradle"
+            SIGNING_BUILD_TYPE="groovy"
+
+          elif [ -f "$MODULE_DIR/build.gradle.kts" ]; then
+
+            SIGNING_BUILD_FILE="$MODULE_DIR/build.gradle.kts"
+            SIGNING_BUILD_TYPE="kotlin"
 
           else
 
-            echo "ERROR: module Gradle file not found."
-
-            echo ""
-
-            echo "Expected:"
-
-            echo "$BUILD_FILE"
-
-            echo "$BUILD_KTS_FILE"
-
+            echo "ERROR: Could not find module Gradle file."
             exit 1
 
           fi
 
-
-      # ==================================================
-      # PREPARE SIGNING KEYSTORE
-      # ==================================================
-
-      - name: Prepare signing
-        run: |
-
-          echo "========================================"
-          echo "PREPARE SIGNING"
-          echo "========================================"
-
-          mkdir -p \
-            "$PROJECT_DIR/.androidaide/signing"
-
-          cp \
-            "build-input/signing-key.jks" \
-            "$PROJECT_DIR/.androidaide/signing/release-key.jks"
-
-          chmod 600 \
-            "$PROJECT_DIR/.androidaide/signing/release-key.jks"
-
-          echo "Signing keystore prepared."
-
-          ls -lh \
-            "$PROJECT_DIR/.androidaide/signing/release-key.jks"
-
-
-      # ==================================================
-      # CREATE SIGNING PROPERTIES
-      # ==================================================
-
-      - name: Create signing properties
-        env:
-          STORE_PASSWORD: ${{ inputs.store_password }}
-          KEY_ALIAS: ${{ inputs.key_alias }}
-          KEY_PASSWORD: ${{ inputs.key_password }}
-
-        run: |
-
-          echo "========================================"
-          echo "CREATE SIGNING PROPERTIES"
-          echo "========================================"
-
-          printf '%s\n' \
-            "storeFile=.androidaide/signing/release-key.jks" \
-            "storePassword=$STORE_PASSWORD" \
-            "keyAlias=$KEY_ALIAS" \
-            "keyPassword=$KEY_PASSWORD" \
-            > "$PROJECT_DIR/signing.properties"
-
-          chmod 600 \
-            "$PROJECT_DIR/signing.properties"
-
-          echo "signing.properties created."
-
-
-      # ==================================================
-      # VERIFY KEYSTORE
-      # ==================================================
-
-      - name: Verify keystore
-        env:
-          STORE_PASSWORD: ${{ inputs.store_password }}
-
-        run: |
-
-          echo "========================================"
-          echo "VERIFY KEYSTORE"
-          echo "========================================"
-
-          if [ ! -s \
-            "$PROJECT_DIR/.androidaide/signing/release-key.jks"
-          ]; then
-
-            echo "ERROR: keystore missing or empty"
-
-            exit 1
-
-          fi
-
-          keytool \
-            -list \
-            -keystore \
-            "$PROJECT_DIR/.androidaide/signing/release-key.jks" \
-            -storepass "$STORE_PASSWORD" \
-            > /dev/null
-
-          if [ $? -ne 0 ]; then
-
-            echo "ERROR: invalid keystore or password"
-
-            exit 1
-
-          fi
-
-          echo "Keystore is valid."
-
-
-      # ==================================================
-      # AUTOMATIC SIGNING INJECTION
-      # ==================================================
-
-      - name: Inject automatic release signing
-        shell: bash
-        run: |
-
-          echo "========================================"
-          echo "AUTOMATIC SIGNING INJECTION"
-          echo "========================================"
+          echo "SIGNING_BUILD_FILE=$SIGNING_BUILD_FILE" >> "$GITHUB_ENV"
+          echo "SIGNING_BUILD_TYPE=$SIGNING_BUILD_TYPE" >> "$GITHUB_ENV"
 
           echo "Gradle file:"
           echo "$SIGNING_BUILD_FILE"
 
-          echo ""
+          echo "Gradle type:"
+          echo "$SIGNING_BUILD_TYPE"
 
-          python3 - "$SIGNING_BUILD_FILE" "$SIGNING_BUILD_TYPE" <<'PY'
+
+      # ==========================================================
+      # PREPARE TEMPORARY KEYSTORE
+      # ==========================================================
+
+      - name: Prepare temporary signing files
+        shell: bash
+        env:
+          STORE_PASSWORD: ${{ inputs.store_password }}
+          KEY_ALIAS: ${{ inputs.key_alias }}
+          KEY_PASSWORD: ${{ inputs.key_password }}
+        run: |
+
+          set -e
+
+          SIGNING_DIR="$PROJECT_DIR/.androidaide/signing"
+
+          mkdir -p "$SIGNING_DIR"
+
+          cp \
+            "build-input/signing-key.jks" \
+            "$SIGNING_DIR/release-key.jks"
+
+          chmod 600 \
+            "$SIGNING_DIR/release-key.jks"
+
+
+          # ------------------------------------------------------
+          # Create signing.properties safely
+          # ------------------------------------------------------
+
+          python3 - "$PROJECT_DIR" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" <<'PY'
 
           import sys
+          from pathlib import Path
 
-          path = sys.argv[1]
+          project_dir = Path(sys.argv[1])
+
+          store_password = sys.argv[2]
+          key_alias = sys.argv[3]
+          key_password = sys.argv[4]
+
+
+          def escape_properties(value):
+              value = str(value)
+
+              value = value.replace("\\", "\\\\")
+              value = value.replace("\n", "\\n")
+              value = value.replace("\r", "\\r")
+
+              return value
+
+
+          properties_file = project_dir / "signing.properties"
+
+          content = (
+              "storeFile=.androidaide/signing/release-key.jks\n"
+              "storePassword=" + escape_properties(store_password) + "\n"
+              "keyAlias=" + escape_properties(key_alias) + "\n"
+              "keyPassword=" + escape_properties(key_password) + "\n"
+          )
+
+          properties_file.write_text(
+              content,
+              encoding="utf-8"
+          )
+
+          print("signing.properties created.")
+
+          PY
+
+          chmod 600 "$PROJECT_DIR/signing.properties"
+
+
+      # ==========================================================
+      # VERIFY KEYSTORE
+      # ==========================================================
+
+      - name: Verify signing keystore
+        shell: bash
+        env:
+          STORE_PASSWORD: ${{ inputs.store_password }}
+        run: |
+
+          set -e
+
+          KEYSTORE="$PROJECT_DIR/.androidaide/signing/release-key.jks"
+
+          echo "Checking keystore..."
+
+          keytool \
+            -list \
+            -keystore "$KEYSTORE" \
+            -storepass "$STORE_PASSWORD" \
+            >/dev/null
+
+          echo "Keystore is valid."
+
+
+      # ==========================================================
+      # BACKUP ORIGINAL GRADLE FILE
+      # ==========================================================
+
+      - name: Backup module Gradle file
+        shell: bash
+        run: |
+
+          set -e
+
+          cp \
+            "$SIGNING_BUILD_FILE" \
+            "$SIGNING_BUILD_FILE.androidaide-original"
+
+          echo "Original Gradle file backed up."
+
+
+      # ==========================================================
+      # TEMPORARY SIGNING CONFIGURATION
+      # ==========================================================
+
+      - name: Inject temporary signing configuration
+        shell: bash
+        run: |
+
+          set -e
+
+          python3 \
+            "$SIGNING_BUILD_FILE" \
+            "$SIGNING_BUILD_TYPE" \
+            "$PROJECT_DIR" <<'PY'
+
+          import sys
+          from pathlib import Path
+
+
+          gradle_path = Path(sys.argv[1])
           gradle_type = sys.argv[2]
+          project_dir = Path(sys.argv[3])
 
-          with open(path, "r", encoding="utf-8") as f:
-              text = f.read()
+
+          text = gradle_path.read_text(
+              encoding="utf-8"
+          )
+
 
           marker_begin = "ANDROID_AIDE_AUTO_SIGNING_BEGIN"
           marker_end = "ANDROID_AIDE_AUTO_SIGNING_END"
 
+
           if marker_begin in text:
-              print("Automatic signing already exists.")
+
+              print(
+                  "Automatic signing configuration already exists."
+              )
+
               sys.exit(0)
+
+
+          # ======================================================
+          # GROOVY
+          # ======================================================
 
           if gradle_type == "groovy":
 
               signing_code = r'''
 
-          // ==========================================================
-          // ANDROID AIDE AUTOMATIC RELEASE SIGNING
-          // ==========================================================
+// ==========================================================
+// ANDROID AIDE TEMPORARY AUTOMATIC SIGNING
+// ==========================================================
 
-          // ANDROID_AIDE_AUTO_SIGNING_BEGIN
+// ANDROID_AIDE_AUTO_SIGNING_BEGIN
 
-          def androidAideSigningFile =
-                  rootProject.file("signing.properties")
+def androidAideSigningFile =
+        rootProject.file("signing.properties")
 
-          def androidAideSigningProperties =
-                  new java.util.Properties()
+def androidAideSigningProperties =
+        new java.util.Properties()
 
-          if (androidAideSigningFile.exists()) {
+if (androidAideSigningFile.exists()) {
 
-              androidAideSigningFile.withInputStream {
+    androidAideSigningFile.withInputStream {
+        androidAideSigningProperties.load(it)
+    }
+}
 
-                  androidAideSigningProperties.load(it)
+android {
+    signingConfigs {
 
-              }
-          }
+        androidAideRelease {
 
-          android {
+            if (androidAideSigningFile.exists()) {
 
-              signingConfigs {
+                storeFile =
+                        rootProject.file(
+                                androidAideSigningProperties.getProperty(
+                                        "storeFile"
+                                )
+                        )
 
-                  androidAideRelease {
+                storePassword =
+                        androidAideSigningProperties.getProperty(
+                                "storePassword"
+                        )
 
-                      if (androidAideSigningFile.exists()) {
+                keyAlias =
+                        androidAideSigningProperties.getProperty(
+                                "keyAlias"
+                        )
 
-                          storeFile rootProject.file(
-                                  androidAideSigningProperties.getProperty(
-                                          "storeFile"
-                                  )
-                          )
+                keyPassword =
+                        androidAideSigningProperties.getProperty(
+                                "keyPassword"
+                        )
+            }
+        }
+    }
 
-                          storePassword =
-                                  androidAideSigningProperties.getProperty(
-                                          "storePassword"
-                                  )
+    buildTypes {
 
-                          keyAlias =
-                                  androidAideSigningProperties.getProperty(
-                                          "keyAlias"
-                                  )
+        release {
 
-                          keyPassword =
-                                  androidAideSigningProperties.getProperty(
-                                          "keyPassword"
-                                  )
-                      }
-                  }
-              }
+            signingConfig =
+                    signingConfigs.androidAideRelease
+        }
+    }
+}
 
-              buildTypes {
+// ANDROID_AIDE_AUTO_SIGNING_END
 
-                  release {
+'''
 
-                      signingConfig =
-                              signingConfigs.androidAideRelease
 
-                      minifyEnabled false
-                  }
-              }
-          }
-
-          // ANDROID_AIDE_AUTO_SIGNING_END
-
-          '''
+          # ======================================================
+          # KOTLIN DSL
+          # ======================================================
 
           elif gradle_type == "kotlin":
 
               signing_code = r'''
 
-          // ==========================================================
-          // ANDROID AIDE AUTOMATIC RELEASE SIGNING
-          // ==========================================================
+// ==========================================================
+// ANDROID AIDE TEMPORARY AUTOMATIC SIGNING
+// ==========================================================
 
-          // ANDROID_AIDE_AUTO_SIGNING_BEGIN
+// ANDROID_AIDE_AUTO_SIGNING_BEGIN
 
-          val androidAideSigningFile =
-              rootProject.file("signing.properties")
+val androidAideSigningFile =
+    rootProject.file("signing.properties")
 
-          val androidAideSigningProperties =
-              java.util.Properties()
+val androidAideSigningProperties =
+    java.util.Properties()
 
-          if (androidAideSigningFile.exists()) {
+if (androidAideSigningFile.exists()) {
 
-              androidAideSigningFile.inputStream().use {
+    androidAideSigningFile.inputStream().use {
+        androidAideSigningProperties.load(it)
+    }
+}
 
-                  androidAideSigningProperties.load(it)
+android {
 
-              }
-          }
+    signingConfigs {
 
-          android {
+        create("androidAideRelease") {
 
-              signingConfigs {
+            if (androidAideSigningFile.exists()) {
 
-                  create("androidAideRelease") {
+                storeFile =
+                    rootProject.file(
+                        androidAideSigningProperties.getProperty(
+                            "storeFile"
+                        )
+                    )
 
-                      if (androidAideSigningFile.exists()) {
+                storePassword =
+                    androidAideSigningProperties.getProperty(
+                        "storePassword"
+                    )
 
-                          storeFile =
-                              rootProject.file(
-                                  androidAideSigningProperties.getProperty(
-                                      "storeFile"
-                                  )
-                              )
+                keyAlias =
+                    androidAideSigningProperties.getProperty(
+                        "keyAlias"
+                    )
 
-                          storePassword =
-                              androidAideSigningProperties.getProperty(
-                                  "storePassword"
-                              )
+                keyPassword =
+                    androidAideSigningProperties.getProperty(
+                        "keyPassword"
+                    )
+            }
+        }
+    }
 
-                          keyAlias =
-                              androidAideSigningProperties.getProperty(
-                                  "keyAlias"
-                              )
+    buildTypes {
 
-                          keyPassword =
-                              androidAideSigningProperties.getProperty(
-                                  "keyPassword"
-                              )
-                      }
-                  }
-              }
+        getByName("release") {
 
-              buildTypes {
+            signingConfig =
+                signingConfigs.getByName(
+                    "androidAideRelease"
+                )
+        }
+    }
+}
 
-                  getByName("release") {
+// ANDROID_AIDE_AUTO_SIGNING_END
 
-                      signingConfig =
-                          signingConfigs.getByName(
-                              "androidAideRelease"
-                          )
+'''
 
-                      isMinifyEnabled = false
-                  }
-              }
-          }
-
-          // ANDROID_AIDE_AUTO_SIGNING_END
-
-          '''
 
           else:
 
-              print("ERROR: unsupported Gradle type")
+              print(
+                  "ERROR: Unsupported Gradle type:"
+                  + gradle_type
+              )
+
               sys.exit(1)
 
-          with open(path, "a", encoding="utf-8") as f:
+
+          # ======================================================
+          # APPEND TEMPORARY CONFIGURATION
+          # ======================================================
+
+          with gradle_path.open(
+              "a",
+              encoding="utf-8"
+          ) as f:
+
               f.write(signing_code)
 
-          print("Automatic release signing injected successfully.")
+
+          print(
+              "Temporary signing configuration injected successfully."
+          )
 
           PY
 
 
-      # ==================================================
-      # VERIFY SIGNING INJECTION
-      # ==================================================
+      # ==========================================================
+      # VERIFY SIGNING CONFIGURATION
+      # ==========================================================
 
-      - name: Verify signing injection
+      - name: Verify signing configuration
         shell: bash
         run: |
 
-          echo "========================================"
-          echo "VERIFY SIGNING INJECTION"
-          echo "========================================"
+          set -e
+
+          echo "Checking signing injection..."
 
           if ! grep -q \
             "ANDROID_AIDE_AUTO_SIGNING_BEGIN" \
             "$SIGNING_BUILD_FILE"; then
 
-            echo "ERROR: automatic signing was not injected."
-
+            echo "ERROR: Signing configuration marker not found."
             exit 1
 
           fi
+
 
           if ! grep -q \
             "signingConfig" \
             "$SIGNING_BUILD_FILE"; then
 
             echo "ERROR: signingConfig not found."
-
             exit 1
 
           fi
 
-          echo "Automatic signing configuration detected."
 
-          echo ""
+          if ! grep -q \
+            "androidAideRelease" \
+            "$SIGNING_BUILD_FILE"; then
 
-          echo "Injected configuration:"
-
-          grep -n \
-            -A 80 \
-            "ANDROID_AIDE_AUTO_SIGNING_BEGIN" \
-            "$SIGNING_BUILD_FILE" || true
-
-
-      # ==================================================
-      # SHOW SIGNING PROPERTIES
-      # ==================================================
-
-      - name: Verify signing files
-        shell: bash
-        run: |
-
-          echo "========================================"
-          echo "VERIFY SIGNING FILES"
-          echo "========================================"
-
-          if [ ! -f "$PROJECT_DIR/signing.properties" ]; then
-
-            echo "ERROR: signing.properties not found"
-
+            echo "ERROR: androidAideRelease not found."
             exit 1
 
           fi
 
-          if [ ! -s \
-            "$PROJECT_DIR/.androidaide/signing/release-key.jks"
-          ]; then
-
-            echo "ERROR: keystore missing"
-
-            exit 1
-
-          fi
-
-          echo "Signing files exist."
 
           echo ""
+          echo "Temporary signing configuration:"
+          echo "--------------------------------"
 
-          echo "Signing properties keys:"
-
-          grep -E \
-            '^(storeFile|storePassword|keyAlias|keyPassword)=' \
-            "$PROJECT_DIR/signing.properties" \
-            | sed \
-              's/storePassword=.*/storePassword=********/; s/keyPassword=.*/keyPassword=********/'
+          sed -n \
+            '/ANDROID_AIDE_AUTO_SIGNING_BEGIN/,/ANDROID_AIDE_AUTO_SIGNING_END/p' \
+            "$SIGNING_BUILD_FILE"
 
           echo ""
-
-          echo "Keystore:"
-
-          ls -lh \
-            "$PROJECT_DIR/.androidaide/signing/release-key.jks"
+          echo "Signing configuration verified."
 
 
-      # ==================================================
-      # MAKE GRADLE EXECUTABLE
-      # ==================================================
-
-      - name: Make Gradle executable
-        run: |
-
-          chmod +x \
-            "$PROJECT_DIR/gradlew"
-
-          ls -lh \
-            "$PROJECT_DIR/gradlew"
-
-
-      # ==================================================
+      # ==========================================================
       # GRADLE VERSION
-      # ==================================================
+      # ==========================================================
 
-      - name: Check Gradle version
+      - name: Check Gradle
+        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
 
-          echo "========================================"
-          echo "GRADLE VERSION"
-          echo "========================================"
+          set -e
+
+          chmod +x ./gradlew
 
           ./gradlew --version
 
 
-      # ==================================================
+      # ==========================================================
       # GRADLE CLEAN
-      # ==================================================
+      # ==========================================================
 
       - name: Gradle clean
+        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
 
-          echo "========================================"
-          echo "GRADLE CLEAN"
-          echo "========================================"
+          set -e
 
-          ./gradlew clean \
-            -PsigningPropertiesFile=signing.properties \
-            --stacktrace
+          ./gradlew \
+            clean \
+            --stacktrace \
+            --no-daemon
 
 
-      # ==================================================
+      # ==========================================================
       # BUILD SIGNED APK + AAB
-      # ==================================================
+      # ==========================================================
 
-      - name: Build Signed APK and AAB
+      - name: Build signed APK and AAB
+        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         env:
           MODULE: ${{ inputs.module }}
-
         run: |
 
-          echo "========================================"
-          echo "BUILD SIGNED APK + AAB"
-          echo "========================================"
+          set -e
 
           echo ""
-
-          echo "Module:"
-          echo "$MODULE"
-
-          echo ""
+          echo "=========================================="
+          echo "BUILD SIGNED APK"
+          echo "=========================================="
 
           ./gradlew \
             ":${MODULE}:assembleRelease" \
-            ":${MODULE}:bundleRelease" \
-            -PsigningPropertiesFile=signing.properties \
             --stacktrace \
+            --no-daemon \
             --info
 
 
-      # ==================================================
-      # SHOW BUILD OUTPUTS
-      # ==================================================
-
-      - name: Show build outputs
-        working-directory: ${{ env.PROJECT_DIR }}
-        if: always()
-        run: |
-
-          echo "========================================"
-          echo "BUILD OUTPUTS"
-          echo "========================================"
-
           echo ""
+          echo "=========================================="
+          echo "BUILD SIGNED AAB"
+          echo "=========================================="
 
-          echo "APK files:"
-
-          find . \
-            -type f \
-            -name "*.apk" \
-            -print || true
-
-          echo ""
-
-          echo "AAB files:"
-
-          find . \
-            -type f \
-            -name "*.aab" \
-            -print || true
+          ./gradlew \
+            ":${MODULE}:bundleRelease" \
+            --stacktrace \
+            --no-daemon \
+            --info
 
 
-      # ==================================================
+      # ==========================================================
       # FIND SIGNED APK
-      # ==================================================
+      # ==========================================================
 
       - name: Find signed APK
-        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        env:
+          MODULE: ${{ inputs.module }}
         run: |
 
-          echo "========================================"
-          echo "FIND SIGNED APK"
-          echo "========================================"
+          set -e
 
-          APK_DIR="${{ inputs.module }}/build/outputs/apk/release"
+          APK_DIR="$PROJECT_DIR/$MODULE/build/outputs/apk/release"
+
+          echo "APK directory:"
+          echo "$APK_DIR"
 
           if [ ! -d "$APK_DIR" ]; then
 
-            echo "ERROR: APK release directory not found"
+            echo "ERROR: APK directory not found."
 
-            echo ""
-
-            echo "All APK files:"
-
-            find . \
+            find "$PROJECT_DIR/$MODULE/build/outputs" \
               -type f \
-              -name "*.apk" \
-              -print || true
+              -print \
+              2>/dev/null || true
 
             exit 1
 
           fi
 
+
+          echo ""
           echo "APK files:"
-
           find "$APK_DIR" \
+            -maxdepth 1 \
             -type f \
             -name "*.apk" \
-            -print || true
+            -print
 
-          APK_PATH=$(find "$APK_DIR" \
+
+          APK_FILE=$(find "$APK_DIR" \
+            -maxdepth 1 \
             -type f \
             -name "*.apk" \
-            -not -name "*-unsigned.apk" \
-            -print \
-            -quit)
+            ! -name "*-unsigned.apk" \
+            | head -1)
 
-          if [ -z "$APK_PATH" ]; then
 
-            echo ""
-
-            echo "ERROR: SIGNED APK NOT FOUND."
+          if [ -z "$APK_FILE" ]; then
 
             echo ""
+            echo "ERROR: Signed APK not found."
 
-            echo "Files found:"
+            echo ""
+            echo "Available APK files:"
 
             find "$APK_DIR" \
               -type f \
-              -print || true
-
-            echo ""
-
-            echo "Release APK was not signed."
+              -name "*.apk" \
+              -print \
+              || true
 
             exit 1
 
           fi
 
-          echo ""
-
-          echo "========================================"
-          echo "SIGNED APK FOUND"
-          echo "========================================"
-
-          echo "$APK_PATH"
 
           echo ""
-
-          ls -lh "$APK_PATH"
-
-          echo ""
-
-          echo "APK_PATH=$GITHUB_WORKSPACE/$PROJECT_DIR/$APK_PATH" \
-            >> "$GITHUB_ENV"
+          echo "Signed APK:"
+          echo "$APK_FILE"
 
 
-      # ==================================================
+          # ------------------------------------------------------
+          # Verify APK is signed
+          # ------------------------------------------------------
+
+          if command -v apksigner >/dev/null 2>&1; then
+
+            echo ""
+            echo "Verifying APK signature..."
+
+            apksigner verify \
+              --verbose \
+              "$APK_FILE"
+
+          fi
+
+
+          echo "APK_FILE=$APK_FILE" >> "$GITHUB_ENV"
+
+
+      # ==========================================================
       # FIND SIGNED AAB
-      # ==================================================
+      # ==========================================================
 
       - name: Find signed AAB
-        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        env:
+          MODULE: ${{ inputs.module }}
         run: |
 
-          echo "========================================"
-          echo "FIND SIGNED AAB"
-          echo "========================================"
+          set -e
 
-          AAB_DIR="${{ inputs.module }}/build/outputs/bundle/release"
+          AAB_DIR="$PROJECT_DIR/$MODULE/build/outputs/bundle/release"
+
+          echo "AAB directory:"
+          echo "$AAB_DIR"
+
 
           if [ ! -d "$AAB_DIR" ]; then
 
-            echo "ERROR: AAB release directory not found"
+            echo "ERROR: AAB directory not found."
 
-            echo ""
-
-            echo "All AAB files:"
-
-            find . \
+            find "$PROJECT_DIR/$MODULE/build/outputs" \
               -type f \
-              -name "*.aab" \
-              -print || true
+              -print \
+              2>/dev/null || true
 
             exit 1
 
           fi
 
+
+          echo ""
           echo "AAB files:"
 
           find "$AAB_DIR" \
+            -maxdepth 1 \
             -type f \
             -name "*.aab" \
-            -print || true
+            -print
 
-          AAB_PATH=$(find "$AAB_DIR" \
+
+          AAB_FILE=$(find "$AAB_DIR" \
+            -maxdepth 1 \
             -type f \
             -name "*.aab" \
-            -print \
-            -quit)
+            | head -1)
 
-          if [ -z "$AAB_PATH" ]; then
 
-            echo ""
-
-            echo "ERROR: SIGNED AAB NOT FOUND."
+          if [ -z "$AAB_FILE" ]; then
 
             echo ""
-
-            echo "Files found:"
+            echo "ERROR: AAB not found."
 
             find "$AAB_DIR" \
               -type f \
-              -print || true
+              -print \
+              || true
 
             exit 1
 
           fi
 
-          echo ""
-
-          echo "========================================"
-          echo "SIGNED AAB FOUND"
-          echo "========================================"
-
-          echo "$AAB_PATH"
 
           echo ""
-
-          ls -lh "$AAB_PATH"
-
-          echo ""
-
-          echo "AAB_PATH=$GITHUB_WORKSPACE/$PROJECT_DIR/$AAB_PATH" \
-            >> "$GITHUB_ENV"
+          echo "Signed AAB:"
+          echo "$AAB_FILE"
 
 
-      # ==================================================
-      # VERIFY APK
-      # ==================================================
+          echo "AAB_FILE=$AAB_FILE" >> "$GITHUB_ENV"
 
-      - name: Verify APK
+
+      # ==========================================================
+      # COPY TO STANDARD OUTPUT NAMES
+      # ==========================================================
+
+      - name: Prepare final signed outputs
+        shell: bash
+        env:
+          MODULE: ${{ inputs.module }}
         run: |
 
-          echo "========================================"
-          echo "VERIFY APK"
-          echo "========================================"
+          set -e
 
-          if [ ! -f "$APK_PATH" ]; then
+          APK_OUTPUT_DIR="$PROJECT_DIR/$MODULE/build/outputs/apk/release"
+          AAB_OUTPUT_DIR="$PROJECT_DIR/$MODULE/build/outputs/bundle/release"
 
-            echo "ERROR: APK does not exist"
 
+          FINAL_APK="$APK_OUTPUT_DIR/app-release.apk"
+          FINAL_AAB="$AAB_OUTPUT_DIR/app-release.aab"
+
+
+          # ------------------------------------------------------
+          # APK
+          # ------------------------------------------------------
+
+          if [ "$APK_FILE" != "$FINAL_APK" ]; then
+
+            cp \
+              "$APK_FILE" \
+              "$FINAL_APK"
+
+          fi
+
+
+          # ------------------------------------------------------
+          # AAB
+          # ------------------------------------------------------
+
+          if [ "$AAB_FILE" != "$FINAL_AAB" ]; then
+
+            cp \
+              "$AAB_FILE" \
+              "$FINAL_AAB"
+
+          fi
+
+
+          # ------------------------------------------------------
+          # Verify files
+          # ------------------------------------------------------
+
+          if [ ! -s "$FINAL_APK" ]; then
+
+            echo "ERROR: Final APK is missing or empty."
             exit 1
 
           fi
 
-          echo "Signed APK verified:"
 
-          ls -lh "$APK_PATH"
+          if [ ! -s "$FINAL_AAB" ]; then
 
-
-      # ==================================================
-      # VERIFY AAB
-      # ==================================================
-
-      - name: Verify AAB
-        run: |
-
-          echo "========================================"
-          echo "VERIFY AAB"
-          echo "========================================"
-
-          if [ ! -f "$AAB_PATH" ]; then
-
-            echo "ERROR: AAB does not exist"
-
+            echo "ERROR: Final AAB is missing or empty."
             exit 1
 
           fi
 
-          echo "Signed AAB verified:"
 
-          ls -lh "$AAB_PATH"
+          echo "FINAL_APK=$FINAL_APK" >> "$GITHUB_ENV"
+          echo "FINAL_AAB=$FINAL_AAB" >> "$GITHUB_ENV"
 
 
-      # ==================================================
-      # UPLOAD SIGNED APK
-      # ==================================================
+          echo ""
+          echo "=========================================="
+          echo "FINAL OUTPUTS"
+          echo "=========================================="
 
-      - name: Upload Signed APK
+          echo ""
+          echo "APK:"
+          ls -lh "$FINAL_APK"
+
+          echo ""
+          echo "AAB:"
+          ls -lh "$FINAL_AAB"
+
+
+      # ==========================================================
+      # UPLOAD SIGNED APK ARTIFACT
+      # ==========================================================
+
+      - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
           name: AndroidAIDE-Signed-APK
-          path: ${{ env.APK_PATH }}
+          path: ${{ env.FINAL_APK }}
           if-no-files-found: error
+          retention-days: 7
 
 
-      # ==================================================
-      # UPLOAD SIGNED AAB
-      # ==================================================
+      # ==========================================================
+      # UPLOAD SIGNED AAB ARTIFACT
+      # ==========================================================
 
-      - name: Upload Signed AAB
+      - name: Upload signed AAB
         uses: actions/upload-artifact@v4
         with:
           name: AndroidAIDE-Signed-AAB
-          path: ${{ env.AAB_PATH }}
+          path: ${{ env.FINAL_AAB }}
           if-no-files-found: error
+          retention-days: 7
 
 
-      # ==================================================
-      # FINAL OUTPUT
-      # ==================================================
+      # ==========================================================
+      # FINAL SUMMARY
+      # ==========================================================
 
-      - name: Final output
+      - name: Build summary
+        shell: bash
         run: |
 
           echo ""
-          echo "========================================"
-          echo "SIGNED BUILD COMPLETED"
-          echo "========================================"
+          echo "=========================================="
+          echo "ANDROID AIDE BUILD SUCCESS"
+          echo "=========================================="
 
           echo ""
-
-          echo "Project:"
-          echo "$PROJECT_DIR"
-
-          echo ""
-
-          echo "Module:"
-          echo "${{ inputs.module }}"
+          echo "Signed APK:"
+          echo "$FINAL_APK"
 
           echo ""
-
-          echo "SIGNED APK:"
-          echo "$APK_PATH"
-
-          echo ""
-
-          ls -lh "$APK_PATH"
+          echo "Signed AAB:"
+          echo "$FINAL_AAB"
 
           echo ""
-
-          echo "SIGNED AAB:"
-          echo "$AAB_PATH"
-
-          echo ""
-
-          ls -lh "$AAB_PATH"
+          echo "Artifacts:"
+          echo "  AndroidAIDE-Signed-APK"
+          echo "  AndroidAIDE-Signed-AAB"
 
           echo ""
-
-          echo "========================================"
-          echo "APK + AAB BUILD SUCCESSFUL"
-          echo "========================================"
+          echo "The local project Gradle file was only"
+          echo "temporarily modified inside GitHub Actions."
+          echo "The user's original local build.gradle"
+          echo "remains unchanged."

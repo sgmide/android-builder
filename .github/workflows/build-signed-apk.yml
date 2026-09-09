@@ -56,13 +56,12 @@ jobs:
 
 
       # ============================================================
-      # CREATE BUILD INPUT DIRECTORY
+      # PREPARE BUILD INPUT
       # ============================================================
 
       - name: Prepare build input
         shell: bash
         env:
-          MODULE: ${{ inputs.module }}
           STORE_PASSWORD: ${{ inputs.store_password }}
           KEY_ALIAS: ${{ inputs.key_alias }}
           KEY_PASSWORD: ${{ inputs.key_password }}
@@ -76,49 +75,50 @@ jobs:
 
           mkdir -p build-input
 
-          echo "Module: $MODULE"
-
           # --------------------------------------------------------
-          # Find keystore supplied by Android AIDE
+          # Find keystore
           # --------------------------------------------------------
-
-          KEYSTORE_FOUND=""
 
           if [ -f "build-input/signing-key.jks" ]; then
-              KEYSTORE_FOUND="build-input/signing-key.jks"
-          elif [ -f "signing-key.jks" ]; then
-              cp "signing-key.jks" "build-input/signing-key.jks"
-              KEYSTORE_FOUND="build-input/signing-key.jks"
-          fi
 
-          if [ -z "$KEYSTORE_FOUND" ]; then
+              echo "Keystore found:"
+              echo "build-input/signing-key.jks"
+
+          elif [ -f "signing-key.jks" ]; then
+
+              cp "signing-key.jks" \
+                 "build-input/signing-key.jks"
+
+              echo "Keystore copied."
+
+          else
+
               echo ""
-              echo "ERROR: signing-key.jks not found"
+              echo "ERROR: signing-key.jks not found."
               echo ""
               echo "Expected:"
               echo "build-input/signing-key.jks"
-              exit 1
-          fi
 
-          echo "Keystore found:"
-          echo "$KEYSTORE_FOUND"
+              exit 1
+
+          fi
 
           # --------------------------------------------------------
           # Create signing.properties
           # --------------------------------------------------------
 
           cat > build-input/signing.properties <<EOF
-          storeFile=build-input/signing-key.jks
-          storePassword=$STORE_PASSWORD
-          keyAlias=$KEY_ALIAS
-          keyPassword=$KEY_PASSWORD
-          EOF
-
-          echo ""
-          echo "Signing properties created."
+storeFile=build-input/signing-key.jks
+storePassword=$STORE_PASSWORD
+keyAlias=$KEY_ALIAS
+keyPassword=$KEY_PASSWORD
+EOF
 
           chmod 600 build-input/signing-key.jks
           chmod 600 build-input/signing.properties
+
+          echo ""
+          echo "Signing input prepared."
 
 
       # ============================================================
@@ -127,20 +127,18 @@ jobs:
 
       - name: Detect project root
         shell: bash
-        env:
-          MODULE: ${{ inputs.module }}
         run: |
 
           set -e
 
           echo "========================================"
-          echo "DETECT PROJECT"
+          echo "DETECT PROJECT ROOT"
           echo "========================================"
 
           PROJECT_ROOT=""
 
           # --------------------------------------------------------
-          # Normal project
+          # Current directory
           # --------------------------------------------------------
 
           if [ -f "settings.gradle" ] || \
@@ -152,35 +150,53 @@ jobs:
           else
 
               # ----------------------------------------------------
-              # Search one/two levels deep for Gradle project
+              # Search nested project
               # ----------------------------------------------------
 
-              FOUND_SETTINGS=$(find . -maxdepth 3 \
-                \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+              SETTINGS_FILE=$(find . \
+                -maxdepth 4 \
+                \( \
+                  -name "settings.gradle" \
+                  -o \
+                  -name "settings.gradle.kts" \
+                \) \
                 -print -quit)
 
-              if [ -n "$FOUND_SETTINGS" ]; then
-                  PROJECT_ROOT=$(dirname "$FOUND_SETTINGS")
+              if [ -n "$SETTINGS_FILE" ]; then
+
+                  PROJECT_ROOT=$(dirname "$SETTINGS_FILE")
+
               fi
 
           fi
 
           if [ -z "$PROJECT_ROOT" ]; then
-              echo ""
-              echo "ERROR: Android Gradle project root not found."
-              echo ""
-              echo "Searching files..."
 
-              find . -maxdepth 4 -type f \
-                \( -name "settings.gradle" \
-                -o -name "settings.gradle.kts" \
-                -o -name "build.gradle" \
-                -o -name "build.gradle.kts" \) \
+              echo ""
+              echo "ERROR: Gradle project root not found."
+
+              echo ""
+              echo "Available Gradle files:"
+
+              find . \
+                -maxdepth 5 \
+                -type f \
+                \( \
+                  -name "settings.gradle" \
+                  -o \
+                  -name "settings.gradle.kts" \
+                  -o \
+                  -name "build.gradle" \
+                  -o \
+                  -name "build.gradle.kts" \
+                \) \
                 -print
 
               exit 1
+
           fi
 
+          echo ""
           echo "Project root:"
           echo "$PROJECT_ROOT"
 
@@ -188,7 +204,7 @@ jobs:
 
 
       # ============================================================
-      # COPY SIGNING FILES INTO PROJECT
+      # INSTALL SIGNING FILES
       # ============================================================
 
       - name: Install signing files
@@ -211,15 +227,15 @@ jobs:
           cp "$GITHUB_WORKSPACE/build-input/signing.properties" \
              "signing.properties"
 
+          chmod 600 build-input/signing-key.jks
+          chmod 600 signing.properties
+
           echo ""
           echo "Signing files installed."
 
-          ls -l build-input/signing-key.jks
-          ls -l signing.properties
-
 
       # ============================================================
-      # FIND MODULE GRADLE FILE
+      # FIND MODULE GRADLE
       # ============================================================
 
       - name: Find module Gradle file
@@ -231,7 +247,7 @@ jobs:
           set -e
 
           echo "========================================"
-          echo "FIND MODULE GRADLE FILE"
+          echo "FIND MODULE GRADLE"
           echo "========================================"
 
           cd "$PROJECT_ROOT"
@@ -239,27 +255,41 @@ jobs:
           MODULE_GRADLE=""
 
           if [ -f "$MODULE/build.gradle" ]; then
+
               MODULE_GRADLE="$MODULE/build.gradle"
 
           elif [ -f "$MODULE/build.gradle.kts" ]; then
+
               MODULE_GRADLE="$MODULE/build.gradle.kts"
 
           else
 
-              echo "Could not find:"
+              echo ""
+              echo "ERROR: Module Gradle file not found."
+
+              echo ""
+              echo "Looking for:"
               echo "$MODULE/build.gradle"
               echo "$MODULE/build.gradle.kts"
 
               echo ""
-              echo "Available Gradle files:"
+              echo "Available files:"
 
-              find . -maxdepth 5 -type f \
-                \( -name "build.gradle" -o -name "build.gradle.kts" \) \
+              find . \
+                -maxdepth 5 \
+                -type f \
+                \( \
+                  -name "build.gradle" \
+                  -o \
+                  -name "build.gradle.kts" \
+                \) \
                 -print
 
               exit 1
+
           fi
 
+          echo ""
           echo "Module Gradle:"
           echo "$MODULE_GRADLE"
 
@@ -272,425 +302,431 @@ jobs:
 
       - name: Inject release signing
         shell: bash
-        env:
-          MODULE: ${{ inputs.module }}
         run: |
 
           set -e
+
+          cd "$PROJECT_ROOT"
 
           echo "========================================"
           echo "INJECT RELEASE SIGNING"
           echo "========================================"
 
-          cd "$PROJECT_ROOT"
-
           echo ""
           echo "Gradle file:"
           echo "$MODULE_GRADLE"
 
+
           # ========================================================
-          # GROOVY BUILD.GRADLE
+          # GROOVY
           # ========================================================
 
           if [[ "$MODULE_GRADLE" == *.gradle ]]; then
 
               echo ""
-              echo "Detected Groovy build.gradle"
+              echo "Groovy build.gradle detected."
 
-              python3 <<'PY'
-          from pathlib import Path
+              python3 - "$MODULE_GRADLE" <<'PY'
+import sys
+from pathlib import Path
 
-          gradle_file = Path("$MODULE_GRADLE")
-          text = gradle_file.read_text()
+gradle_path = Path(sys.argv[1])
+text = gradle_path.read_text()
 
-          # --------------------------------------------------------
-          # Signing properties loader
-          # --------------------------------------------------------
+# ------------------------------------------------------------
+# Signing properties loader
+# ------------------------------------------------------------
 
-          signing_loader = r'''
-          import java.util.Properties
+loader = r'''
+import java.util.Properties
 
-          def signingPropertiesFile = rootProject.file("signing.properties")
+def signingPropertiesFile = rootProject.file("signing.properties")
 
-          def signingProperties = new Properties()
+def signingProperties = new Properties()
 
-          if (signingPropertiesFile.exists()) {
-              signingPropertiesFile.withInputStream {
-                  signingProperties.load(it)
-              }
-          }
-          '''
+if (signingPropertiesFile.exists()) {
+    signingPropertiesFile.withInputStream {
+        signingProperties.load(it)
+    }
+}
+'''
 
-          # --------------------------------------------------------
-          # Add imports/properties only once
-          # --------------------------------------------------------
+# ------------------------------------------------------------
+# Add loader only once
+# ------------------------------------------------------------
 
-          if "signingPropertiesFile" not in text:
-              text = signing_loader + "\n" + text
+if "def signingPropertiesFile" not in text:
+    text = loader + "\n" + text
 
-          # --------------------------------------------------------
-          # Signing config
-          # --------------------------------------------------------
 
-          signing_block = r'''
-              signingConfigs {
+# ------------------------------------------------------------
+# Signing configuration
+# ------------------------------------------------------------
 
-                  release {
+signing_config = r'''
+    signingConfigs {
 
-                      if (signingPropertiesFile.exists()) {
+        release {
 
-                          storeFile rootProject.file(
-                              signingProperties.getProperty("storeFile")
-                          )
+            if (signingPropertiesFile.exists()) {
 
-                          storePassword signingProperties.getProperty(
-                              "storePassword"
-                          )
+                storeFile rootProject.file(
+                    signingProperties.getProperty("storeFile")
+                )
 
-                          keyAlias signingProperties.getProperty(
-                              "keyAlias"
-                          )
+                storePassword signingProperties.getProperty(
+                    "storePassword"
+                )
 
-                          keyPassword signingProperties.getProperty(
-                              "keyPassword"
-                          )
-                      }
-                  }
-              }
-          '''
+                keyAlias signingProperties.getProperty(
+                    "keyAlias"
+                )
 
-          # --------------------------------------------------------
-          # Release build type
-          # --------------------------------------------------------
+                keyPassword signingProperties.getProperty(
+                    "keyPassword"
+                )
+            }
+        }
+    }
+'''
 
-          build_type_block = r'''
-              buildTypes {
 
-                  release {
+# ------------------------------------------------------------
+# Release build type
+# ------------------------------------------------------------
 
-                      signingConfig signingConfigs.release
+release_config = r'''
+    buildTypes {
 
-                      minifyEnabled false
-                  }
-              }
-          '''
+        release {
 
-          # --------------------------------------------------------
-          # If signing was already injected, do not duplicate
-          # --------------------------------------------------------
+            signingConfig signingConfigs.release
 
-          if "signingConfigs" not in text:
+            minifyEnabled false
+        }
+    }
+'''
 
-              # Find android { and its matching closing brace.
-              android_pos = text.find("android")
 
-              if android_pos == -1:
-                  raise SystemExit(
-                      "ERROR: android { block not found"
-                  )
+# ------------------------------------------------------------
+# Find android { block
+# ------------------------------------------------------------
 
-              open_brace = text.find("{", android_pos)
+android_match = text.find("android")
 
-              if open_brace == -1:
-                  raise SystemExit(
-                      "ERROR: android block opening brace not found"
-                  )
+if android_match == -1:
+    raise SystemExit(
+        "ERROR: android { block not found."
+    )
 
-              depth = 0
-              close_brace = -1
+android_open = text.find("{", android_match)
 
-              in_single = False
-              in_double = False
-              escaped = False
+if android_open == -1:
+    raise SystemExit(
+        "ERROR: android { opening brace not found."
+    )
 
-              i = open_brace
 
-              while i < len(text):
+# ------------------------------------------------------------
+# Find matching closing brace
+# ------------------------------------------------------------
 
-                  ch = text[i]
+depth = 0
+android_close = -1
 
-                  if escaped:
-                      escaped = False
-                      i += 1
-                      continue
+in_single = False
+in_double = False
+escaped = False
 
-                  if ch == "\\":
-                      escaped = True
-                      i += 1
-                      continue
+i = android_open
 
-                  if not in_double and ch == "'":
-                      in_single = not in_single
+while i < len(text):
 
-                  elif not in_single and ch == '"':
-                      in_double = not in_double
+    ch = text[i]
 
-                  elif not in_single and not in_double:
+    if escaped:
+        escaped = False
+        i += 1
+        continue
 
-                      if ch == "{":
-                          depth += 1
+    if ch == "\\":
+        escaped = True
+        i += 1
+        continue
 
-                      elif ch == "}":
-                          depth -= 1
+    if not in_double and ch == "'":
+        in_single = not in_single
 
-                          if depth == 0:
-                              close_brace = i
-                              break
+    elif not in_single and ch == '"':
+        in_double = not in_double
 
-                  i += 1
+    elif not in_single and not in_double:
 
-              if close_brace == -1:
-                  raise SystemExit(
-                      "ERROR: android { block could not be parsed"
-                  )
+        if ch == "{":
+            depth += 1
 
-              insertion = "\n" + signing_block + "\n"
+        elif ch == "}":
 
-              # ----------------------------------------------------
-              # Existing buildTypes block?
-              # ----------------------------------------------------
+            depth -= 1
 
-              if "buildTypes" not in text[open_brace:close_brace]:
+            if depth == 0:
+                android_close = i
+                break
 
-                  insertion += "\n" + build_type_block + "\n"
+    i += 1
 
-              else:
 
-                  # Existing buildTypes may already contain release.
-                  # Add signingConfig to the existing release block
-                  # only when possible.
-                  android_part = text[open_brace:close_brace]
+if android_close == -1:
+    raise SystemExit(
+        "ERROR: android { block could not be parsed."
+    )
 
-                  release_pos = android_part.find(
-                      "release"
-                  )
 
-                  if release_pos == -1:
+# ------------------------------------------------------------
+# Inject only once
+# ------------------------------------------------------------
 
-                      insertion += "\n" + build_type_block + "\n"
+android_content = text[
+    android_open + 1:
+    android_close
+]
 
-                  else:
+injection = ""
 
-                      # If an existing release block exists,
-                      # add signingConfig before its closing brace.
-                      release_open = android_part.find(
-                          "{",
-                          release_pos
-                      )
 
-                      if release_open == -1:
-                          insertion += "\n" + build_type_block + "\n"
+if "androidAideRelease" not in android_content and \
+   "signingConfigs" not in android_content:
 
-                      else:
+    injection += "\n"
+    injection += signing_config
+    injection += "\n"
 
-                          depth2 = 0
-                          release_close = -1
 
-                          for j in range(
-                              release_open,
-                              len(android_part)
-                          ):
+# ------------------------------------------------------------
+# Configure release build type
+# ------------------------------------------------------------
 
-                              if android_part[j] == "{":
-                                  depth2 += 1
+if "signingConfig signingConfigs.release" not in android_content:
 
-                              elif android_part[j] == "}":
-                                  depth2 -= 1
+    injection += "\n"
+    injection += release_config
+    injection += "\n"
 
-                                  if depth2 == 0:
-                                      release_close = j
-                                      break
 
-                          if release_close == -1:
-                              insertion += (
-                                  "\n" +
-                                  build_type_block +
-                                  "\n"
-                              )
+# ------------------------------------------------------------
+# Insert into existing android block
+# ------------------------------------------------------------
 
-                          else:
+if injection.strip():
 
-                              absolute_close = (
-                                  open_brace +
-                                  release_close +
-                                  release_open -
-                                  release_open
-                              )
+    text = (
+        text[:android_close]
+        + injection
+        + text[android_close:]
+    )
 
-                              # Calculate correctly using the
-                              # android-part offset.
-                              absolute_release_close = (
-                                  open_brace +
-                                  release_close
-                              )
 
-                              text = (
-                                  text[:absolute_release_close] +
-                                  "\n" +
-                                  "        signingConfig "
-                                  "signingConfigs.release\n" +
-                                  "        minifyEnabled false\n" +
-                                  text[absolute_release_close:]
-                              )
+gradle_path.write_text(text)
 
-              text = (
-                  text[:close_brace] +
-                  insertion +
-                  text[close_brace:]
-              )
+print("Groovy signing configuration injected successfully.")
+PY
 
-          gradle_file.write_text(text)
-          print("Groovy signing injection completed.")
-          PY
 
           # ========================================================
-          # KOTLIN DSL BUILD.GRADLE.KTS
+          # KOTLIN DSL
           # ========================================================
 
           elif [[ "$MODULE_GRADLE" == *.gradle.kts ]]; then
 
               echo ""
-              echo "Detected Kotlin DSL build.gradle.kts"
+              echo "Kotlin DSL build.gradle.kts detected."
 
-              python3 <<'PY'
-          from pathlib import Path
+              python3 - "$MODULE_GRADLE" <<'PY'
+import sys
+from pathlib import Path
 
-          gradle_file = Path("$MODULE_GRADLE")
-          text = gradle_file.read_text()
+gradle_path = Path(sys.argv[1])
+text = gradle_path.read_text()
 
-          # --------------------------------------------------------
-          # Signing properties loader
-          # --------------------------------------------------------
 
-          loader = r'''
-          import java.util.Properties
-          import java.io.FileInputStream
+# ------------------------------------------------------------
+# Properties loader
+# ------------------------------------------------------------
 
-          val signingPropertiesFile =
-              rootProject.file("signing.properties")
+loader = r'''
+import java.util.Properties
+import java.io.FileInputStream
 
-          val signingProperties = Properties()
+val signingPropertiesFile =
+    rootProject.file("signing.properties")
 
-          if (signingPropertiesFile.exists()) {
-              FileInputStream(signingPropertiesFile).use {
-                  signingProperties.load(it)
-              }
-          }
-          '''
+val signingProperties = Properties()
 
-          if "signingPropertiesFile" not in text:
-              text = loader + "\n" + text
+if (signingPropertiesFile.exists()) {
 
-          # --------------------------------------------------------
-          # Kotlin signing configuration
-          # --------------------------------------------------------
+    FileInputStream(signingPropertiesFile).use {
+        signingProperties.load(it)
+    }
+}
+'''
 
-          signing_block = r'''
-              signingConfigs {
-                  create("androidAideRelease") {
 
-                      if (signingPropertiesFile.exists()) {
+if "val signingPropertiesFile" not in text:
+    text = loader + "\n" + text
 
-                          storeFile =
-                              rootProject.file(
-                                  signingProperties.getProperty(
-                                      "storeFile"
-                                  )
-                              )
 
-                          storePassword =
-                              signingProperties.getProperty(
-                                  "storePassword"
-                              )
+# ------------------------------------------------------------
+# Kotlin signing config
+# ------------------------------------------------------------
 
-                          keyAlias =
-                              signingProperties.getProperty(
-                                  "keyAlias"
-                              )
+signing_config = r'''
+    signingConfigs {
 
-                          keyPassword =
-                              signingProperties.getProperty(
-                                  "keyPassword"
-                              )
-                      }
-                  }
-              }
-          '''
+        create("androidAideRelease") {
 
-          build_type_block = r'''
-              buildTypes {
-                  getByName("release") {
+            if (signingPropertiesFile.exists()) {
 
-                      signingConfig =
-                          signingConfigs.getByName(
-                              "androidAideRelease"
-                          )
+                storeFile =
+                    rootProject.file(
+                        signingProperties.getProperty(
+                            "storeFile"
+                        )
+                    )
 
-                      isMinifyEnabled = false
-                  }
-              }
-          '''
+                storePassword =
+                    signingProperties.getProperty(
+                        "storePassword"
+                    )
 
-          if "androidAideRelease" not in text:
+                keyAlias =
+                    signingProperties.getProperty(
+                        "keyAlias"
+                    )
 
-              android_pos = text.find("android")
+                keyPassword =
+                    signingProperties.getProperty(
+                        "keyPassword"
+                    )
+            }
+        }
+    }
+'''
 
-              if android_pos == -1:
-                  raise SystemExit(
-                      "ERROR: android { block not found"
-                  )
 
-              open_brace = text.find("{", android_pos)
+# ------------------------------------------------------------
+# Kotlin release config
+# ------------------------------------------------------------
 
-              if open_brace == -1:
-                  raise SystemExit(
-                      "ERROR: android block opening brace not found"
-                  )
+release_config = r'''
+    buildTypes {
 
-              depth = 0
-              close_brace = -1
+        getByName("release") {
 
-              for i in range(open_brace, len(text)):
+            signingConfig =
+                signingConfigs.getByName(
+                    "androidAideRelease"
+                )
 
-                  if text[i] == "{":
-                      depth += 1
+            isMinifyEnabled = false
+        }
+    }
+'''
 
-                  elif text[i] == "}":
 
-                      depth -= 1
+# ------------------------------------------------------------
+# Find android block
+# ------------------------------------------------------------
 
-                      if depth == 0:
-                          close_brace = i
-                          break
+android_match = text.find("android")
 
-              if close_brace == -1:
-                  raise SystemExit(
-                      "ERROR: android block could not be parsed"
-                  )
+if android_match == -1:
+    raise SystemExit(
+        "ERROR: android { block not found."
+    )
 
-              insertion = (
-                  "\n" +
-                  signing_block +
-                  "\n" +
-                  build_type_block +
-                  "\n"
-              )
+android_open = text.find("{", android_match)
 
-              text = (
-                  text[:close_brace] +
-                  insertion +
-                  text[close_brace:]
-              )
+if android_open == -1:
+    raise SystemExit(
+        "ERROR: android opening brace not found."
+    )
 
-          gradle_file.write_text(text)
 
-          print("Kotlin DSL signing injection completed.")
-          PY
+# ------------------------------------------------------------
+# Match braces
+# ------------------------------------------------------------
+
+depth = 0
+android_close = -1
+
+i = android_open
+
+while i < len(text):
+
+    if text[i] == "{":
+        depth += 1
+
+    elif text[i] == "}":
+
+        depth -= 1
+
+        if depth == 0:
+            android_close = i
+            break
+
+    i += 1
+
+
+if android_close == -1:
+    raise SystemExit(
+        "ERROR: android block could not be parsed."
+    )
+
+
+android_content = text[
+    android_open + 1:
+    android_close
+]
+
+
+injection = ""
+
+
+if "androidAideRelease" not in android_content:
+
+    injection += "\n"
+    injection += signing_config
+    injection += "\n"
+
+
+if "androidAideRelease" not in android_content:
+
+    injection += "\n"
+    injection += release_config
+    injection += "\n"
+
+
+if injection.strip():
+
+    text = (
+        text[:android_close]
+        + injection
+        + text[android_close:]
+    )
+
+
+gradle_path.write_text(text)
+
+print("Kotlin signing configuration injected successfully.")
+PY
+
 
           else
 
+              echo ""
               echo "ERROR: Unsupported Gradle file:"
               echo "$MODULE_GRADLE"
+
               exit 1
 
           fi
@@ -700,7 +736,7 @@ jobs:
       # SHOW MODIFIED GRADLE
       # ============================================================
 
-      - name: Show signing configuration
+      - name: Verify Gradle signing configuration
         shell: bash
         run: |
 
@@ -709,25 +745,75 @@ jobs:
           cd "$PROJECT_ROOT"
 
           echo "========================================"
-          echo "MODIFIED BUILD.GRADLE"
+          echo "MODIFIED GRADLE FILE"
           echo "========================================"
 
-          sed -n '1,260p' "$MODULE_GRADLE"
+          echo ""
+
+          cat "$MODULE_GRADLE"
 
           echo ""
           echo "========================================"
-          echo "SIGNING.PROPERTIES"
+          echo "CHECK SIGNING CONFIGURATION"
           echo "========================================"
 
-          # Do NOT print passwords.
+          if ! grep -q "signingConfig" "$MODULE_GRADLE"; then
+
+              echo ""
+              echo "ERROR: signingConfig was not injected."
+
+              exit 1
+
+          fi
+
+          echo ""
+          echo "signingConfig detected successfully."
+
+
+      # ============================================================
+      # CHECK SIGNING FILE
+      # ============================================================
+
+      - name: Check signing files
+        shell: bash
+        run: |
+
+          set -e
+
+          cd "$PROJECT_ROOT"
+
+          echo "========================================"
+          echo "CHECK SIGNING FILES"
+          echo "========================================"
+
+          if [ ! -f "signing.properties" ]; then
+
+              echo "ERROR: signing.properties not found."
+              exit 1
+
+          fi
+
+          if [ ! -f "build-input/signing-key.jks" ]; then
+
+              echo "ERROR: signing-key.jks not found."
+              exit 1
+
+          fi
+
+          echo ""
+          echo "Signing files OK."
+
+          echo ""
+          echo "signing.properties:"
+
           sed \
-            -e 's/storePassword=.*/storePassword=***HIDDEN***/' \
-            -e 's/keyPassword=.*/keyPassword=***HIDDEN***/' \
+            -e 's/^storePassword=.*/storePassword=***HIDDEN***/' \
+            -e 's/^keyPassword=.*/keyPassword=***HIDDEN***/' \
             signing.properties
 
 
       # ============================================================
-      # MAKE GRADLE WRAPPER EXECUTABLE
+      # GRADLE WRAPPER
       # ============================================================
 
       - name: Prepare Gradle wrapper
@@ -738,27 +824,36 @@ jobs:
 
           cd "$PROJECT_ROOT"
 
+          echo "========================================"
+          echo "PREPARE GRADLE WRAPPER"
+          echo "========================================"
+
           if [ ! -f "./gradlew" ]; then
 
+              echo ""
               echo "ERROR: gradlew not found."
 
-              find . -maxdepth 3 -type f \
+              find . \
+                -maxdepth 4 \
+                -type f \
                 -name "gradlew" \
                 -print
 
               exit 1
+
           fi
 
           chmod +x ./gradlew
 
+          echo ""
           echo "Gradle wrapper ready."
 
 
       # ============================================================
-      # BUILD SIGNED APK + AAB
+      # CLEAN
       # ============================================================
 
-      - name: Build signed APK and AAB
+      - name: Clean project
         shell: bash
         env:
           MODULE: ${{ inputs.module }}
@@ -769,31 +864,103 @@ jobs:
           cd "$PROJECT_ROOT"
 
           echo "========================================"
-          echo "BUILD SIGNED APK + AAB"
+          echo "CLEAN PROJECT"
           echo "========================================"
 
-          echo ""
-          echo "Module:"
-          echo "$MODULE"
+          ./gradlew clean --no-daemon
 
-          echo ""
-          echo "Running:"
 
-          echo "./gradlew :$MODULE:assembleRelease"
-          echo "./gradlew :$MODULE:bundleRelease"
+      # ============================================================
+      # BUILD SIGNED APK
+      # ============================================================
+
+      - name: Build signed APK
+        shell: bash
+        env:
+          MODULE: ${{ inputs.module }}
+        run: |
+
+          set -e
+
+          cd "$PROJECT_ROOT"
+
+          echo "========================================"
+          echo "BUILD SIGNED APK"
+          echo "========================================"
 
           ./gradlew \
             ":$MODULE:assembleRelease" \
+            --stacktrace \
+            --no-daemon
+
+          echo ""
+          echo "APK build completed."
+
+
+      # ============================================================
+      # BUILD SIGNED AAB
+      # ============================================================
+
+      - name: Build signed AAB
+        shell: bash
+        env:
+          MODULE: ${{ inputs.module }}
+        run: |
+
+          set -e
+
+          cd "$PROJECT_ROOT"
+
+          echo "========================================"
+          echo "BUILD SIGNED AAB"
+          echo "========================================"
+
+          ./gradlew \
             ":$MODULE:bundleRelease" \
             --stacktrace \
             --no-daemon
 
           echo ""
-          echo "Gradle build completed."
+          echo "AAB build completed."
 
 
       # ============================================================
-      # FIND SIGNED APK
+      # SHOW ALL OUTPUTS
+      # ============================================================
+
+      - name: Inspect build outputs
+        shell: bash
+        env:
+          MODULE: ${{ inputs.module }}
+        run: |
+
+          set -e
+
+          cd "$PROJECT_ROOT"
+
+          echo "========================================"
+          echo "BUILD OUTPUTS"
+          echo "========================================"
+
+          echo ""
+          echo "APK outputs:"
+          echo "----------------------------------------"
+
+          find "$MODULE/build/outputs/apk" \
+            -type f \
+            -print 2>/dev/null || true
+
+          echo ""
+          echo "AAB outputs:"
+          echo "----------------------------------------"
+
+          find "$MODULE/build/outputs/bundle" \
+            -type f \
+            -print 2>/dev/null || true
+
+
+      # ============================================================
+      # VERIFY APK
       # ============================================================
 
       - name: Verify signed APK
@@ -807,33 +974,33 @@ jobs:
           cd "$PROJECT_ROOT"
 
           echo "========================================"
-          echo "FIND SIGNED APK"
+          echo "VERIFY SIGNED APK"
           echo "========================================"
 
           APK_PATH="$MODULE/build/outputs/apk/release/app-release.apk"
 
           echo ""
-          echo "Expected APK:"
+          echo "Expected:"
           echo "$APK_PATH"
 
           if [ ! -f "$APK_PATH" ]; then
 
               echo ""
-              echo "ERROR: signed APK not found"
+              echo "ERROR: signed APK not found."
+
               echo ""
+              echo "Actual APK files:"
 
-              echo "APK directory:"
+              find "$MODULE/build/outputs/apk" \
+                -type f \
+                -print 2>/dev/null || true
 
-              if [ -d "$MODULE/build/outputs/apk/release" ]; then
-                  find "$MODULE/build/outputs/apk/release" \
-                    -maxdepth 3 \
-                    -type f \
-                    -print
-              else
-                  echo "APK release directory does not exist."
-              fi
+              echo ""
+              echo "This means Gradle did not generate:"
+              echo "app-release.apk"
 
               exit 1
+
           fi
 
           echo ""
@@ -845,7 +1012,7 @@ jobs:
 
 
       # ============================================================
-      # FIND SIGNED AAB
+      # VERIFY AAB
       # ============================================================
 
       - name: Verify signed AAB
@@ -859,33 +1026,33 @@ jobs:
           cd "$PROJECT_ROOT"
 
           echo "========================================"
-          echo "FIND SIGNED AAB"
+          echo "VERIFY SIGNED AAB"
           echo "========================================"
 
           AAB_PATH="$MODULE/build/outputs/bundle/release/app-release.aab"
 
           echo ""
-          echo "Expected AAB:"
+          echo "Expected:"
           echo "$AAB_PATH"
 
           if [ ! -f "$AAB_PATH" ]; then
 
               echo ""
-              echo "ERROR: signed AAB not found"
+              echo "ERROR: signed AAB not found."
+
               echo ""
+              echo "Actual AAB files:"
 
-              echo "Bundle directory:"
+              find "$MODULE/build/outputs/bundle" \
+                -type f \
+                -print 2>/dev/null || true
 
-              if [ -d "$MODULE/build/outputs/bundle/release" ]; then
-                  find "$MODULE/build/outputs/bundle/release" \
-                    -maxdepth 3 \
-                    -type f \
-                    -print
-              else
-                  echo "Bundle release directory does not exist."
-              fi
+              echo ""
+              echo "This means Gradle did not generate:"
+              echo "app-release.aab"
 
               exit 1
+
           fi
 
           echo ""
@@ -897,7 +1064,7 @@ jobs:
 
 
       # ============================================================
-      # VERIFY BOTH OUTPUTS
+      # FINAL OUTPUT CHECK
       # ============================================================
 
       - name: Final output check
@@ -908,8 +1075,9 @@ jobs:
 
           cd "$PROJECT_ROOT"
 
+          echo ""
           echo "========================================"
-          echo "FINAL BUILD OUTPUTS"
+          echo "FINAL OUTPUT"
           echo "========================================"
 
           echo ""
@@ -919,9 +1087,6 @@ jobs:
           echo ""
           echo "AAB:"
           echo "$AAB_PATH"
-
-          test -f "$APK_PATH"
-          test -f "$AAB_PATH"
 
           echo ""
           echo "APK size:"

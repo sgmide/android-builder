@@ -74,11 +74,12 @@ jobs:
           echo "$JAVA_HOME"
 
 
-      # ==================================================
+            # ==================================================
       # ANDROID SDK 35
       # ==================================================
 
       - name: Setup Android SDK
+        shell: bash
         run: |
           echo "========================================"
           echo "ANDROID SDK"
@@ -94,15 +95,89 @@ jobs:
 
           echo ""
 
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+
+          echo "SDK_ROOT:"
+          echo "$SDK_ROOT"
+
+          echo ""
+
+          echo "Searching sdkmanager..."
+
+          SDKMANAGER=""
+
+          if [ -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
+          elif [ -x "$SDK_ROOT/cmdline-tools/16.0/bin/sdkmanager" ]; then
+            SDKMANAGER="$SDK_ROOT/cmdline-tools/16.0/bin/sdkmanager"
+
+          elif [ -x "$SDK_ROOT/cmdline-tools/15.0/bin/sdkmanager" ]; then
+            SDKMANAGER="$SDK_ROOT/cmdline-tools/15.0/bin/sdkmanager"
+
+          elif [ -x "$SDK_ROOT/cmdline-tools/14.0/bin/sdkmanager" ]; then
+            SDKMANAGER="$SDK_ROOT/cmdline-tools/14.0/bin/sdkmanager"
+
+          else
+            SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" \
+              -type f \
+              -name sdkmanager \
+              -perm -111 \
+              -print \
+              -quit 2>/dev/null || true)
+          fi
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo ""
+            echo "ERROR: sdkmanager not found."
+            echo ""
+            echo "Android SDK contents:"
+            find "$SDK_ROOT" \
+              -maxdepth 4 \
+              -type f \
+              -name sdkmanager \
+              -print 2>/dev/null || true
+            exit 1
+          fi
+
+          echo ""
+          echo "sdkmanager found:"
+          echo "$SDKMANAGER"
+
+          SDKMANAGER_DIR="$(dirname "$SDKMANAGER")"
+
+          echo ""
+
+          echo "sdkmanager directory:"
+          echo "$SDKMANAGER_DIR"
+
+          echo ""
+
+          echo "Adding Android SDK tools to PATH..."
+
+          echo "$SDKMANAGER_DIR" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/emulator" >> "$GITHUB_PATH"
+
+          export PATH="$SDKMANAGER_DIR:$SDK_ROOT/platform-tools:$SDK_ROOT/emulator:$PATH"
+
+          echo ""
+
+          echo "sdkmanager version:"
+
+          "$SDKMANAGER" --version
+
+          echo ""
+
           echo "Accepting Android SDK licenses..."
 
-          yes | sdkmanager --licenses || true
+          yes | "$SDKMANAGER" --licenses || true
 
           echo ""
 
           echo "Installing Android SDK 35..."
 
-          sdkmanager \
+          "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
@@ -117,6 +192,7 @@ jobs:
       # ==================================================
 
       - name: Check Android SDK
+        shell: bash
         run: |
           echo "========================================"
           echo "CHECK ANDROID SDK"
@@ -132,9 +208,39 @@ jobs:
 
           echo ""
 
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+
+          SDKMANAGER=""
+
+          if [ -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
+          else
+            SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" \
+              -type f \
+              -name sdkmanager \
+              -perm -111 \
+              -print \
+              -quit 2>/dev/null || true)
+          fi
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found"
+            exit 1
+          fi
+
+          SDKMANAGER_DIR="$(dirname "$SDKMANAGER")"
+
+          export PATH="$SDKMANAGER_DIR:$SDK_ROOT/platform-tools:$SDK_ROOT/emulator:$PATH"
+
+          echo "sdkmanager:"
+          "$SDKMANAGER" --version
+
+          echo ""
+
           echo "Installed Android packages:"
 
-          sdkmanager --list_installed | grep -E \
+          "$SDKMANAGER" --list_installed | grep -E \
             "platform-tools|platforms;android-35|build-tools;35.0.0" \
             || true
 
@@ -147,6 +253,16 @@ jobs:
 
           echo "jarsigner:"
           command -v jarsigner || true
+
+          echo ""
+
+          echo "Android platform directory:"
+          ls -ld "$SDK_ROOT/platforms/android-35" || true
+
+          echo ""
+
+          echo "Build tools directory:"
+          ls -ld "$SDK_ROOT/build-tools/35.0.0" || true
 
 
       # ==================================================
